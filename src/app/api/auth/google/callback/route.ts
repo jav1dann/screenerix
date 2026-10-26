@@ -33,7 +33,10 @@ export async function GET(req: NextRequest) {
   const saved = await readOAuthState(req.cookies.get(OAUTH_COOKIE)?.value);
   const next = saved?.next ?? '/terminal';
   // A failed "connect Google" goes back to the account screen, a failed sign-in to /login.
-  const fail = (code: GoogleErrorCode) => redirect(saved?.mode === 'link'
+  // Without the cookie (it expired on a slow consent screen) a signed-in visitor was connecting:
+  // /login would just bounce them to the terminal without saying why.
+  const linking = saved ? saved.mode === 'link' : Boolean(await getCurrentUser());
+  const fail = (code: GoogleErrorCode) => redirect(linking
     ? new URL(`/terminal?account=google_${code}`, appOrigin(origin)).toString()
     : loginErrorUrl(origin, code, next));
 
