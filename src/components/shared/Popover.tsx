@@ -24,7 +24,12 @@ const PLACEMENT = {
   'right-start': 'left-[calc(100%+6px)] top-0',
 } as const;
 
-const PANEL = 'z-[60] rounded-xl border border-solid border-sx-line2 bg-[#14151A]/97 p-1.5 text-[13px] text-sx-text shadow-2xl shadow-black/60 backdrop-blur-xl';
+/**
+ * A portalled panel lives at <body> level, so it must clear every overlay it can open from:
+ * modals (z 115–130) and alert toasts (140); only the landing preloader (200) is higher.
+ */
+const Z = { inline: 'z-[60]', portal: 'z-[150]' } as const;
+const PANEL = 'rounded-xl border border-solid border-sx-line2 bg-[#14151A]/97 p-1.5 text-[13px] text-sx-text shadow-2xl shadow-black/60 backdrop-blur-xl';
 
 /** Pin a portalled panel next to its trigger (fixed coordinates from the trigger's box). */
 function placeFixed(panel: HTMLElement, rect: DOMRect, placement: NonNullable<PopoverProps['placement']>): void {
@@ -78,7 +83,7 @@ export default function Popover({ trigger, children, placement = 'bottom-end', p
     <div
       ref={attachPanel}
       role="menu"
-      className={`${portal ? '' : `absolute ${PLACEMENT[placement]}`} ${PANEL} ${className}`}
+      className={`${portal ? Z.portal : `absolute ${PLACEMENT[placement]} ${Z.inline}`} ${PANEL} ${className}`}
     >
       {children(close)}
     </div>
