@@ -11,8 +11,9 @@ self.addEventListener('push', (event) => {
     body: data.body || '',
     tag: data.tag || undefined,
     renotify: Boolean(data.tag),
-    icon: '/icon.svg',
-    badge: '/icon.svg',
+    icon: '/icons/icon-192.png',
+    // PNG: Android doesn't render SVG notification icons; the badge is a white-on-transparent mask.
+    badge: '/icons/badge-96.png',
     data: { url: data.url || '/terminal' },
   }));
 });
