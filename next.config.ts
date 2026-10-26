@@ -5,6 +5,9 @@ const nextConfig: NextConfig = {
   allowedDevOrigins: ["26.186.104.187"],
   cacheComponents: true,
   partialPrefetching: true,
+  experimental: {
+    agentUpgrade: "security",
+  },
   turbopack: {
     rules: {
       "*.css": {
