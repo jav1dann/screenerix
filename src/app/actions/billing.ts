@@ -6,7 +6,7 @@
  * can use these (that's how they renew); signed-out callers can't.
  */
 import { headers } from 'next/headers';
-import { DAY_MS } from '@/lib/auth/access';
+import { DAY_MS, proPeriodStart } from '@/lib/auth/access';
 import { getCurrentUser } from '@/lib/auth/dal';
 import { isThrottled, recordFailure } from '@/lib/auth/throttle';
 import { findById } from '@/lib/auth/users';
@@ -29,8 +29,10 @@ export interface Quote {
   payAmount: number;
   /** Provider / conversion fee included in `payAmount` (0: none). */
   processingFee: number;
-  /** Pro end date if paid now (stacks on the current period). */
+  /** Pro end date if paid now (stacks on the current period, and on what's left of the trial). */
   proUntil: number;
+  /** Whole trial days carried over on top of the purchase (0: no active trial). */
+  trialDaysKept: number;
 }
 
 /** How long an order's address and amount stay valid. */
@@ -59,7 +61,13 @@ async function quoteAmount(usd: number, network: NetworkId, now: number): Promis
   return amount;
 }
 
-const proUntil = (userId: string, period: Period, now: number) => Math.max(now, findById(userId)?.proExpiresAt ?? 0) + PERIODS[period].days * DAY_MS;
+/** End of the new Pro period, and the trial days it keeps (same rule as `grantPro` applies on payment). */
+function proUntil(userId: string, period: Period, now: number): Pick<Quote, 'proUntil' | 'trialDaysKept'> {
+  const u = findById(userId);
+  const start = u ? proPeriodStart(u, now) : now;
+  const trialLeft = u?.trialEndsAt && u.trialEndsAt > now ? u.trialEndsAt - Math.max(now, u.proExpiresAt ?? 0) : 0;
+  return { proUntil: start + PERIODS[period].days * DAY_MS, trialDaysKept: Math.max(0, Math.round(trialLeft / DAY_MS)) };
+}
 
 export async function quoteCrypto(period: Period, network: NetworkId): Promise<CheckoutResult<Quote>> {
   const user = await getCurrentUser();
@@ -71,7 +79,7 @@ export async function quoteCrypto(period: Period, network: NetworkId): Promise<C
   try {
     const payAmount = await quoteAmount(priceUsd, network, now);
     const processingFee = Math.max(0, Math.round((payAmount - priceUsd) * 100) / 100);
-    return { ok: true, data: { period, network, priceUsd, payAmount, processingFee, proUntil: proUntil(user.id, period, now) } };
+    return { ok: true, data: { period, network, priceUsd, payAmount, processingFee, ...proUntil(user.id, period, now) } };
   } catch (e) {
     console.error(`[billing] quote ${network} failed: ${(e as Error).message}`);
     return { ok: false, error: 'Couldn’t get a quote for this network. Try another one or retry shortly.' };

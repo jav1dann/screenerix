@@ -98,7 +98,7 @@ export default function PlanStep({ period, network, onPeriod, onNetwork, onConti
           <span className="bx-muted">You pay</span>
           <span className="bx-total-num" data-sum-total>{q ? `${fmtUsdt(q.payAmount)} USDT` : quote ? '—' : <Skel />}</span>
         </div>
-        {q && <div className="bx-fine" data-sum-until>Pro active until <strong style={{ color: 'var(--sx-text)' }}>{fmtDay(q.proUntil)}</strong></div>}
+        {q && <div className="bx-fine" data-sum-until>Pro active until <strong style={{ color: 'var(--sx-text)' }}>{fmtDay(q.proUntil)}</strong>{q.trialDaysKept > 0 && <span data-sum-trial-kept> · includes {q.trialDaysKept} trial day{q.trialDaysKept === 1 ? '' : 's'} you keep</span>}</div>}
         {quote && !quote.ok && <div className="bx-note" data-tone={unavailable ? 'info' : 'error'} role="alert">{quote.error}</div>}
         {error && <div className="bx-note" data-tone="error" role="alert" data-order-error>{error}</div>}
         <button type="button" className="bx-btn bx-btn-primary bx-btn-block" onClick={onContinue} disabled={!q || busy} data-continue style={{ marginTop: 'auto' }}>

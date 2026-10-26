@@ -7,7 +7,7 @@
 import { randomBytes, randomUUID, scrypt, timingSafeEqual } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { DAY_MS, TRIAL_DAYS } from './access';
+import { DAY_MS, proPeriodStart, TRIAL_DAYS } from './access';
 import type { Plan, Role, SessionUser } from './access';
 import { DATA_DIR } from './session';
 
@@ -217,7 +217,7 @@ export function findOrCreateGoogleUser(p: { sub: string; email: string; name: st
 export function grantPro(id: string, days: number, now = Date.now()): UserRecord | null {
   const u = findById(id);
   if (!u) return null;
-  return updateUser(id, { plan: 'pro', proExpiresAt: Math.max(now, u.proExpiresAt ?? 0) + days * DAY_MS });
+  return updateUser(id, { plan: 'pro', proExpiresAt: proPeriodStart(u, now) + days * DAY_MS });
 }
 
 export const toSessionUser = (u: UserRecord): SessionUser => ({

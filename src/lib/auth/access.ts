@@ -38,6 +38,14 @@ export function accessOf(user: AccessFields, now: number): { state: AccessState;
   return { state: 'expired', until: user.proExpiresAt ?? user.trialEndsAt };
 }
 
+/**
+ * Where a newly paid Pro period starts: after any paid time left and after an active trial,
+ * so buying during the trial keeps the remaining trial days on top of the purchase.
+ */
+export function proPeriodStart(user: Pick<SessionUser, 'trialEndsAt' | 'proExpiresAt'>, now: number): number {
+  return Math.max(now, user.proExpiresAt ?? 0, user.trialEndsAt ?? 0);
+}
+
 export const hasAccess = (user: AccessFields | null | undefined, now: number): boolean => !!user && accessOf(user, now).state !== 'expired';
 
 /** The trial and Pro both include every feature; an expired account has none. */
