@@ -1,0 +1,37 @@
+/* Account settings modal (`src/components/account`). Built on the .bx-* modal shell from billing.css. */
+.ac-modal{width:min(860px,100%)}
+.ac-body{display:grid;grid-template-columns:200px minmax(0,1fr);min-height:420px}
+.ac-nav{display:flex;flex-direction:column;gap:2px;padding:14px 10px;border-right:1px solid var(--sx-line);background:rgba(255,255,255,0.015)}
+.ac-tab{display:flex;align-items:center;gap:9px;padding:9px 10px;border:0;border-radius:9px;background:transparent;color:var(--sx-muted);font:inherit;font-size:13px;font-weight:600;text-align:left;cursor:pointer}
+.ac-tab:hover{color:var(--sx-text);background:rgba(255,255,255,0.04)}
+.ac-tab[aria-selected="true"]{color:var(--sx-text);background:rgba(48,164,108,0.10);box-shadow:inset 2px 0 0 var(--sx-up)}
+.ac-pane{padding:20px 22px;display:flex;flex-direction:column;gap:14px;min-width:0}
+.ac-card{display:flex;flex-direction:column;gap:12px;padding:16px;border-radius:14px;border:1px solid var(--sx-line);background:rgba(255,255,255,0.02)}
+.ac-card-head h3{margin:0;font-size:14px;font-weight:700}
+.ac-card-head p{margin:3px 0 0;font-size:12px;color:var(--sx-muted)}
+.ac-row{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.ac-row>.bx-btn{margin-left:auto}
+.ac-value{font-size:14px;font-weight:600;overflow-wrap:anywhere}
+.ac-form{display:flex;flex-direction:column;gap:10px;max-width:420px}
+.ac-field{display:flex;flex-direction:column;gap:6px}
+.ac-input{width:100%;font:inherit;font-size:14px;padding:9px 11px;border-radius:9px;border:1px solid var(--sx-line2);background:rgba(11,12,14,0.6);color:var(--sx-text);outline:0}
+.ac-input:focus{border-color:var(--sx-up)}
+.ac-actions{display:flex;gap:8px;justify-content:flex-end}
+.ac-link{display:flex;align-items:center;gap:12px;padding:12px;border-radius:12px;border:1px solid var(--sx-line);background:rgba(11,12,14,0.4)}
+.ac-link[data-connected="true"]{border-color:rgba(48,164,108,0.35)}
+.ac-link-logo{width:38px;height:38px;flex:none;display:grid;place-items:center;border-radius:10px;background:rgba(255,255,255,0.05)}
+.ac-link-text{display:flex;flex-direction:column;gap:2px;min-width:0;flex:1}
+.ac-link-name{font-weight:700}
+.ac-link code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:11.5px;color:var(--sx-text);overflow-wrap:anywhere}
+.ac-plan{display:flex;flex-direction:column;gap:2px}
+.ac-plan-name{font-size:20px;font-weight:800;letter-spacing:-0.02em}
+.bx-note[data-tone="ok"]{background:rgba(48,164,108,0.08);border:1px solid rgba(48,164,108,0.3);color:#9BDDB9}
+a.bx-btn[aria-disabled="true"]{opacity:.5;pointer-events:none}
+@media (max-width:680px){
+  .ac-body{grid-template-columns:minmax(0,1fr)}
+  .ac-nav{flex-direction:row;overflow-x:auto;border-right:0;border-bottom:1px solid var(--sx-line);padding:8px}
+  .ac-tab{white-space:nowrap}
+  .ac-tab[aria-selected="true"]{box-shadow:inset 0 -2px 0 var(--sx-up)}
+  .ac-pane{padding:16px}
+  .ac-link{flex-wrap:wrap}
+}

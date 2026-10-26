@@ -1,0 +1,55 @@
+/** Browser-side client for the `/api/market/*` proxy routes. */
+import { sessionExpired } from '@/lib/auth/expired';
+import type { ExchangeId, FeedEvent, InstrumentMeta, OiPoint, RawCandle, SubMinute, Timeframe } from './exchanges';
+
+export async function fetchJson<T>(url: string): Promise<T> {
+  const res = await fetch(url);
+  if (res.status === 401) sessionExpired();
+  const body = (await res.json().catch(() => ({}))) as T & { error?: string };
+  // The status rides along so callers can tell rate limits (429 / 418) from other failures.
+  if (!res.ok) throw Object.assign(new Error(body.error ?? `HTTP ${res.status}`), { status: res.status });
+  return body;
+}
+
+export type Instruments = Record<string, InstrumentMeta>;
+
+const instrumentCache = new Map<ExchangeId, Promise<Instruments>>();
+
+/** Venue instrument map, fetched once per page session (failed requests are retried on next call). */
+export function fetchInstruments(id: ExchangeId): Promise<Instruments> {
+  let hit = instrumentCache.get(id);
+  if (!hit) {
+    hit = fetchJson<{ instruments: Instruments }>(`/api/market/${id}/instruments`).then((r) => r.instruments);
+    hit.catch(() => instrumentCache.delete(id));
+    instrumentCache.set(id, hit);
+  }
+  return hit;
+}
+
+/** Resolve any base symbol on a venue (universe hits are served from the cached map); null if unlisted. */
+export async function fetchInstrument(id: ExchangeId, symbol: string): Promise<InstrumentMeta | null> {
+  const universe = await fetchInstruments(id).catch(() => null);
+  if (universe?.[symbol]) return universe[symbol];
+  const r = await fetchJson<{ instrument: InstrumentMeta | null }>(`/api/market/${id}/instruments?symbol=${encodeURIComponent(symbol)}`);
+  return r.instrument;
+}
+
+/** Oldest-first candles in base-unit prices; volume in base units. */
+export const fetchKlines = (id: ExchangeId, symbol: string, tf: Timeframe, limit: number, end?: number): Promise<RawCandle[]> =>
+  fetchJson<{ candles: RawCandle[] }>(`/api/market/${id}/klines?symbol=${encodeURIComponent(symbol)}&tf=${tf}&limit=${limit}${end === undefined ? '' : `&end=${end}`}`).then((r) => r.candles);
+
+/** Recent 1s / 30s candles (base units); trades after `asOf` are not in them yet. */
+export const fetchSubMinute = (id: ExchangeId, symbol: string, tf: SubMinute): Promise<{ candles: RawCandle[]; asOf: number }> =>
+  fetchJson<{ candles: RawCandle[]; asOf: number }>(`/api/market/${id}/klines?symbol=${encodeURIComponent(symbol)}&tf=${tf}`);
+
+/** Open-interest history for a chart timeframe (period is chosen server-side; null = no history). */
+export const fetchOiHistory = (id: ExchangeId, symbol: string, tf: string, limit = 200): Promise<{ period: Timeframe | null; points: OiPoint[] }> =>
+  fetchJson<{ period: Timeframe | null; points: OiPoint[] }>(`/api/market/${id}/oi?symbol=${encodeURIComponent(symbol)}&tf=${tf}&limit=${limit}`);
+
+/** Current open interest in base units (venues without a live OI stream). */
+export const fetchOiCurrent = (id: ExchangeId, symbol: string): Promise<number | null> =>
+  fetchJson<{ oi: number | null }>(`/api/market/${id}/oi?symbol=${encodeURIComponent(symbol)}&current=1`).then((r) => r.oi);
+
+/** Whole-market 24h ticker snapshot for a venue (venue units; scale with the instrument meta). */
+export const fetchTickers = (id: ExchangeId): Promise<FeedEvent[]> =>
+  fetchJson<{ tickers: FeedEvent[] }>(`/api/market/${id}/tickers`).then((r) => r.tickers);

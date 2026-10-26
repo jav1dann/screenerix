@@ -1,26 +1,49 @@
-@import "tailwindcss";
+/*
+ * Tailwind theme + utilities only. Preflight is intentionally omitted so the
+ * hand-tuned landing / terminal styles are not reset.
+ */
+@layer theme, base, components, utilities;
+@import "tailwindcss/theme.css" layer(theme);
+@import "tailwindcss/utilities.css" layer(utilities);
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --sx-bg: #0B0C0E;
+  --sx-panel: #111215;
+  --sx-line: #1E2024;
+  --sx-line2: #2A2D33;
+  --sx-text: #EDEEF0;
+  --sx-muted: #8B8D98;
+  --sx-up: #30A46C;
+  --sx-down: #E5484D;
+  --sx-up-bg: rgba(48, 164, 108, 0.14);
+  --sx-down-bg: rgba(229, 72, 77, 0.14);
+  --sx-alert: #F5C542;
+  color-scheme: dark;
 }
 
+/* Screenerix tokens as Tailwind colours: bg-sx-panel, text-sx-muted, border-sx-line, … */
 @theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --color-background: var(--sx-bg);
+  --color-foreground: var(--sx-text);
+  --color-sx-bg: var(--sx-bg);
+  --color-sx-panel: var(--sx-panel);
+  --color-sx-line: var(--sx-line);
+  --color-sx-line2: var(--sx-line2);
+  --color-sx-text: var(--sx-text);
+  --color-sx-muted: var(--sx-muted);
+  --color-sx-up: var(--sx-up);
+  --color-sx-down: var(--sx-down);
+  --color-sx-alert: var(--sx-alert);
+  --font-sans: var(--font-archivo);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+html,
+body {
+  margin: 0;
+  background: var(--sx-bg);
+  color: var(--sx-text);
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-archivo), system-ui, sans-serif;
 }
