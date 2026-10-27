@@ -39,8 +39,8 @@ export const formationId = (c: Pick<Candidate, 'strategy' | 'tf' | 'dir' | 'anch
 };
 const potentialOf = (entry: number, tp2: number) => (Math.abs(tp2 - entry) / entry) * 100;
 
-function fromCandidate(c: Candidate): Pick<Formation, 'entry' | 'sl' | 'tp1' | 'tp2' | 'score' | 'quality' | 'orderFlow' | 'dailyAligned' | 'note' | 'potential'> {
-  return { entry: c.entry, sl: c.sl, tp1: c.tp1, tp2: c.tp2, score: c.score, quality: qualityOf(c.score), orderFlow: c.orderFlow, dailyAligned: c.dailyAligned, note: c.note, potential: potentialOf(c.entry, c.tp2) };
+function fromCandidate(c: Candidate): Pick<Formation, 'entry' | 'sl' | 'tp1' | 'tp2' | 'score' | 'quality' | 'orderFlow' | 'dailyAligned' | 'note' | 'potential' | 'strength'> {
+  return { entry: c.entry, sl: c.sl, tp1: c.tp1, tp2: c.tp2, score: c.score, quality: qualityOf(c.score), orderFlow: c.orderFlow, dailyAligned: c.dailyAligned, note: c.note, potential: potentialOf(c.entry, c.tp2), strength: c.strength };
 }
 
 /** Price rules: SL → INVALIDATED; half way to TP1 (from ACTIVE) → LATE; TP2 → done. */

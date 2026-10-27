@@ -7,7 +7,7 @@
  * Stage here is only FORMING / ACTIVE; LATE and INVALIDATED come from price
  * moving relative to the frozen levels (`lifecycle.ts`).
  */
-import { barDelta, levels, trueRange } from '@/lib/indicators/calc';
+import { barDelta, levels, rsi, trueRange } from '@/lib/indicators/calc';
 import type { Bar, Level } from '@/lib/indicators/calc';
 import { emaArr, rmaArr } from '@/lib/indicators/math';
 import type { Series } from '@/lib/indicators/math';
@@ -88,6 +88,9 @@ function candidate(
     tf?: Timeframe;
     /** Score points taken off (weak-signal penalty). */
     penalty?: number;
+    /** A strategy's own 0–100 score instead of the generic one (the continuation's strength index). */
+    score?: number;
+    strength?: Candidate['strength'];
   },
 ): Candidate | null {
   const s = sign(dir);
@@ -98,9 +101,9 @@ function candidate(
   if (!(tp1 > 0) || !(tp2 > 0) || s * (tp1 - entry) <= 0 || s * (tp2 - tp1) < 0) return null;
   const orderFlow = stage === 'ACTIVE' && orderFlowAt(extra.flowBars, extra.flowAt, dir);
   const dailyAligned = extra.trend === s;
-  const score = Math.max(0, scoreOf(extra.structure, extra.volume, orderFlow, dailyAligned) - (extra.penalty ?? 0));
+  const score = extra.score ?? Math.max(0, scoreOf(extra.structure, extra.volume, orderFlow, dailyAligned) - (extra.penalty ?? 0));
   const tf = extra.tf ?? FIXED_TF[strategy] ?? '1h';
-  return { strategy, tf, dir, anchorT, stage, entry, sl, tp1, tp2, score, orderFlow, dailyAligned, note: extra.note };
+  return { strategy, tf, dir, anchorT, stage, entry, sl, tp1, tp2, score, orderFlow, dailyAligned, note: extra.note, ...(extra.strength ? { strength: extra.strength } : {}) };
 }
 
 /** Keep the best candidate per direction: ACTIVE before FORMING, then the higher score. */
@@ -458,22 +461,37 @@ const IMPULSE_ATR = 2.5;
 const IMPULSE_MAX_BARS = 6;
 /** Range bars needed between the impulse and the sweep (the liquidity has to build up). */
 const RANGE_MIN_BARS = 3;
-/** The consolidation may give back at most this much of the impulse (a shallow, bullish pullback). */
+/** The consolidation may give back at most this much of the impulse (a shallow pullback). */
 const MAX_RETRACE = 0.62;
-/** After the sweep, the shift in structure has to come within this many bars. */
+/** A close beyond the last opposite swing within this many bars of the sweep counts as a structure shift. */
 const MSS_WITHIN = 10;
-/** Range lows within this many ATR of the low count as equal lows (a resting pool of stops). */
+/** Range lows within this many ATR of the range low count as equal lows (a resting pool of stops). */
 const EQUAL_LOWS_ATR = 0.15;
+/** A sweep candle that closed outside the range has this many candles to close back inside; staying out longer is a breakdown. */
+const RECLAIM_WITHIN = 3;
+/** The stop sits this far (ATR) behind the sweep wick's extreme. */
+const SL_BUFFER_ATR = 0.1;
+const TF_MS: Record<string, number> = { '1m': 60_000, '5m': 5 * 60_000, '15m': 15 * 60_000 };
 
+/**
+ * Bars mirrored through zero (prices negated, high ↔ low): a bearish structure becomes the bullish
+ * one, so the short continuation runs exactly the long's code. Times and volumes are unchanged.
+ */
+const mirror = (bars: readonly Bar[]): Bar[] => bars.map((b) => ({ t: b.t, o: -b.o, h: -b.l, l: -b.h, c: -b.c, v: b.v }));
+
+/** Everything below is written for the LONG side ("low" = the liquidity side); the SHORT side passes mirrored bars. */
 interface Continuation {
-  /** Range high (buy-side liquidity) and low (sell-side liquidity). */
+  /** Range high (the far side) and range low (the liquidity side). */
   R: number;
   S: number;
+  /** The sweep: the first candle that traded through the range low, and the wick's extreme until price was back inside. */
   sweep: { i: number; low: number } | null;
-  /** The last lower high before the sweep: a close above it is the shift in structure. */
-  mss: number;
-  /** The bar that closed above `mss`. */
+  /** The candle that closed back inside the range after the sweep (the entry); null while still outside. */
   confirm: number | null;
+  /** The last lower high before the sweep: a close above it is a structure shift. */
+  mss: number;
+  /** A close above `mss` came within MSS_WITHIN bars of the sweep. */
+  shifted: boolean;
   /** Range lows within 0.15 ATR of the range low. */
   eqLows: number;
   /** The range high was taken before the sweep. */
@@ -481,47 +499,21 @@ interface Continuation {
 }
 
 /**
- * Walks the closed bars after an impulse ending at `e`: builds the range, finds the sweep of
- * its low and the shift in structure after it. null when the setup failed (range too deep,
- * broke out without a sweep, lost the sweep low or the impulse origin, went stale).
+ * Walks the closed bars after an impulse ending at `e`: builds the range and looks for a sweep of
+ * its low. null when the structure failed (range too deep, broke out the other way first, lost the
+ * impulse origin, stayed outside after the sweep, went stale); `sweep: null` while it's intact but
+ * not swept yet — there is nothing to trade then: the stop only exists once a wick took the lows.
  */
 function continuationAfter(bars: readonly Bar[], e: number, last: number, origin: number, move: number, a: number): Continuation | null {
   const top = bars[e].h;
   let R = top, S = Infinity, sI = -1, pierced = false;
-  let sweep: Continuation['sweep'] = null;
-  let mss = -Infinity;
-  const done = (confirm: number | null): Continuation => {
-    let eqLows = 0;
-    for (let i = e + 1; i < (sweep ? sweep.i : last + 1); i++) if (bars[i].l - S <= EQUAL_LOWS_ATR * a) eqLows++;
-    return { R, S, sweep, mss, confirm, eqLows, pierced };
-  };
   for (let j = e + 1; j <= last; j++) {
     const b = bars[j];
-    if (sweep) {
-      if (b.c < sweep.low || b.l <= origin) return null; // the sweep low gave way: a breakdown
-      if (b.c > mss) return done(j);
-      if (j - sweep.i >= MSS_WITHIN) return null;
-      continue;
-    }
     const rangeBars = j - e - 1;
     if (rangeBars >= RANGE_MIN_BARS && b.l < S && restingLow(bars, e, j, S, sI, a)) {
       if (b.l <= origin) return null;
-      // One-candle sweep (wick under, close back in) or two-candle (close under, the next reclaims).
-      let reclaim = -1;
-      if (b.c > S) reclaim = j;
-      else if (j + 1 <= last && bars[j + 1].c > S && bars[j + 1].l > origin) reclaim = j + 1;
-      else if (j === last) return done(null); // closed under the low just now: still undecided
-      if (reclaim < 0) return null;
-      // The last lower high: the highest high of the (up to) three bars before the sweep.
-      mss = Math.max(...bars.slice(Math.max(e + 1, j - 3), j).map((x) => x.h));
-      sweep = { i: j, low: Math.min(b.l, bars[reclaim].l) };
-      if (reclaim > j) {
-        j = reclaim;
-        if (bars[reclaim].c > mss) return done(reclaim);
-      }
-      continue;
+      return afterSweep(bars, e, j, last, origin, a, R, S, pierced);
     }
-    // Still in the range.
     if (rangeBars >= RANGE_MIN_BARS && b.c > R) return null; // broke out without taking the lows
     if (b.h > R) { pierced = true; R = b.h; }
     if (b.l < S) { S = b.l; sI = j; }
@@ -529,7 +521,35 @@ function continuationAfter(bars: readonly Bar[], e: number, last: number, origin
     if (j - e > RANGE_LIFE) return null;
   }
   if (!Number.isFinite(S) || last - e < RANGE_MIN_BARS) return null;
-  return done(null);
+  return { R, S, sweep: null, confirm: null, mss: -Infinity, shifted: false, eqLows: 0, pierced };
+}
+
+/**
+ * From the sweep candle `j` on: the wick may keep extending while price is outside the range; the
+ * first close back inside (same candle, or within RECLAIM_WITHIN candles) confirms the sweep. A
+ * close back under the wick after that, or losing the impulse origin, fails the setup.
+ */
+function afterSweep(bars: readonly Bar[], e: number, j: number, last: number, origin: number, a: number, R: number, S: number, pierced: boolean): Continuation | null {
+  let eqLows = 0;
+  for (let i = e + 1; i < j; i++) if (bars[i].l - S <= EQUAL_LOWS_ATR * a) eqLows++;
+  // The last lower high: the highest high of the (up to) three bars before the sweep.
+  const mss = Math.max(...bars.slice(Math.max(e + 1, j - 3), j).map((x) => x.h));
+  let low = bars[j].l;
+  let confirm: number | null = null;
+  for (let k = j; k <= last; k++) {
+    const b = bars[k];
+    if (confirm === null) {
+      low = Math.min(low, b.l);
+      if (b.l <= origin) return null; // took the impulse's origin: a breakdown, not a sweep
+      if (b.c > S) confirm = k; // back inside the range: the entry
+      else if (k - j >= RECLAIM_WITHIN) return null; // accepted below the range
+    } else if (b.c < low) {
+      return null; // closed back under the sweep wick: failed
+    }
+  }
+  let shifted = false;
+  for (let k = j; k <= Math.min(last, j + MSS_WITHIN); k++) if (bars[k].c > mss) { shifted = true; break; }
+  return { R, S, sweep: { i: j, low }, confirm, mss, shifted, eqLows, pierced };
 }
 
 /**
@@ -544,27 +564,108 @@ function restingLow(bars: readonly Bar[], e: number, j: number, S: number, sI: n
   return touches >= 2;
 }
 
+/** Strength index of a continuation setup ("индекс силы"): 0–100 and the factors behind it. */
+export type Strength = NonNullable<Candidate['strength']>;
+
+const clamp01 = (x: number) => Math.max(0, Math.min(1, Number.isFinite(x) ? x : 0));
+
 /**
- * Long continuation after a liquidity sweep (SMC):
- *  1. Impulse: a bullish displacement of 2–6 bars, mostly green, with at least one body
- *     ≥ 1 ATR, ≥ 2.5 ATR from the leg's low to its high (ATR measured before the leg).
- *  2. Range: at least three bars of consolidation holding the upper part of the impulse
- *     (≤ 62% retrace). Its lows are the sell-side liquidity.
- *  3. Sweep: a closed candle trades below the range low and closes back inside (or the next
- *     candle reclaims it) without losing the impulse's origin.
- *  4. Market-structure shift: within ten bars a candle closes above the last lower high
- *     before the sweep. That close triggers the long.
- * Forming: the range is set and price is coming down to its low, or the low was swept and
- * the shift hasn't closed yet. Active: the shift closed.
+ * How likely the sweep is to hold, from what the market showed around it (LONG terms; `dir` only
+ * words the factors): sweep volume (25), the reclaim candle's momentum (20), RSI on the lower
+ * timeframe flushing at the sweep and turning back (20), the stop pool's size (10), a structure
+ * shift (10), the higher-timeframe trend (10) and the impulse (5); taking the range's far side
+ * first costs 10. A heuristic score, not a back-tested win rate.
  */
-export function detectLongContinuationSweep(bars: readonly Bar[] | null, tf: Timeframe, price: number, k1h: readonly Bar[] | null = null): Candidate[] {
-  if (!bars || bars.length < MIN_PA) return [];
+export function continuationStrength(p: {
+  dir: Direction; bars: readonly Bar[]; lower: readonly Bar[] | null; lowerTf: Timeframe; tf: Timeframe;
+  found: Continuation; a: number; move: number; aligned: boolean;
+}): Strength {
+  const { dir, bars, found, a } = p;
+  const sweep = found.sweep!;
+  const end = found.confirm ?? Math.min(bars.length - 2, sweep.i + RECLAIM_WITHIN);
+  const factors: string[] = [];
+  let total = 0;
+  const add = (weight: number, f: number, label: string | null) => {
+    total += weight * clamp01(f);
+    if (label && f > 0) factors.push(label);
+  };
+  const short = dir === 'SHORT';
+
+  // 1. Volume: the heaviest candle of the sweep vs the 20 before it (3× = full marks).
+  const avg = avgVol(bars, sweep.i) || Infinity;
+  const vr = Math.max(...bars.slice(sweep.i, end + 1).map((b) => b.v)) / avg;
+  add(25, (vr - 1) / 2, `sweep volume ${vr.toFixed(1)}× average`);
+
+  // 2. Momentum: the reclaim candle closes near its high, with a real body.
+  if (found.confirm !== null) {
+    const c = bars[found.confirm];
+    const range = c.h - c.l;
+    const closePos = range > 0 ? (c.c - c.l) / range : 0.5;
+    const body = range > 0 ? Math.max(0, c.c - c.o) / range : 0;
+    const f = 0.6 * closePos + 0.4 * body;
+    add(20, f, f >= 0.5 ? `strong reclaim candle (closed ${Math.round(closePos * 100)}% up its range)` : null);
+  }
+
+  // 3. RSI(14) on the lower timeframe: oversold at the sweep, then turning up.
+  const lower = p.lower && p.lower.length > 20 ? p.lower : bars;
+  const lowerTf = lower === bars ? p.tf : p.lowerTf;
+  const r = rsi(lower, [14]).rsi0;
+  const from = bars[sweep.i].t, sweepEnd = from + TF_MS[p.tf], until = bars[end].t + TF_MS[p.tf];
+  let atSweep = Infinity, now: number | null = null;
+  lower.forEach((b, i) => {
+    const v = r[i];
+    if (v === null || b.t < from || b.t >= until) return;
+    if (b.t < sweepEnd) atSweep = Math.min(atSweep, v);
+    now = v;
+  });
+  if (Number.isFinite(atSweep) && now !== null) {
+    const shown = (v: number) => Math.round(short ? 100 - v : v); // mirrored bars invert RSI
+    const flushed = atSweep <= 30 ? 0.5 : atSweep <= 35 ? 0.3 : 0;
+    const turned = (now as number) - atSweep >= 5 ? 0.5 : 0;
+    add(20, flushed + turned, flushed + turned > 0
+      ? `RSI ${lowerTf} ${shown(atSweep)} at the sweep → ${shown(now)}${flushed ? (short ? ' (overbought flush)' : ' (oversold flush)') : ''}`
+      : null);
+  }
+
+  // 4–7. Structure.
+  add(10, found.eqLows / 3, found.eqLows >= 2 ? `${found.eqLows} equal ${short ? 'highs' : 'lows'} swept` : null);
+  add(10, found.shifted ? 1 : 0, 'structure shifted');
+  add(10, p.aligned ? 1 : 0, 'with the higher-timeframe trend');
+  add(5, p.move / (4 * a), `${(p.move / a).toFixed(1)} ATR impulse`);
+  if (found.pierced) { total -= 10; factors.push(`range ${short ? 'low' : 'high'} taken first (−10)`); }
+  return { value: Math.max(0, Math.min(100, Math.round(total))), factors };
+}
+
+/**
+ * Continuation after a liquidity sweep (SMC), LONG and its exact SHORT mirror:
+ *  1. Impulse: a displacement of 2–6 bars, mostly with the trend, at least one body ≥ 1 ATR and
+ *     ≥ 2.5 ATR end to end (ATR measured before the leg).
+ *  2. Range: at least three bars holding the upper part of the impulse (≤ 62% retrace). Its low
+ *     (LONG; high for SHORT) is the resting liquidity.
+ *  3. Sweep: a closed candle wicks through it. No setup before that — touching or breaking the
+ *     boundary is not a trade, and no stop exists yet.
+ *  4. Return inside: the sweep candle (or one of the next three) closes back inside the range.
+ *     That close is the entry; the stop goes behind the wick's extreme (+0.1 ATR).
+ * FORMING while the sweep candle closed outside and price hasn't closed back in (its only level is
+ * the impulse origin, where the structure fails); ACTIVE on the close back inside.
+ * `lower`: the next lower timeframe's bars (RSI confirmation in the strength index).
+ */
+export function detectContinuationSweep(
+  dir: Direction, raw: readonly Bar[] | null, tf: Timeframe, price: number, k1h: readonly Bar[] | null = null,
+  lowerRaw: readonly Bar[] | null = null, lowerTf: Timeframe = tf,
+): Candidate[] {
+  if (!raw || raw.length < MIN_PA) return [];
+  const long = dir === 'LONG';
+  const bars = long ? raw : mirror(raw);
+  const lower = lowerRaw ? (long ? lowerRaw : mirror(lowerRaw)) : null;
+  const px = (v: number) => (long ? v : -v); // mirrored space → real price
+  const strategy: StrategyId = long ? 'longContinuationSweep' : 'shortContinuationSweep';
   const n = bars.length;
   const last = n - 2; // the newest closed bar (the last one is still forming)
   const atrS = atrSeries(bars);
   const trend = dailyTrend(k1h, price);
 
-  // Newest impulse first: the leg ends at bar e, a high the next two bars don't exceed.
+  // Newest impulse first: the leg ends at bar e, an extreme the next two bars don't exceed.
   for (let e = last - RANGE_MIN_BARS; e >= Math.max(ATR_N + IMPULSE_MAX_BARS + 1, n - PA_WINDOW); e--) {
     if (!isGreen(bars[e]) || bars[e + 1].h > bars[e].h || bars[e + 2].h > bars[e].h) continue;
     let lo = e;
@@ -581,51 +682,55 @@ export function detectLongContinuationSweep(bars: readonly Bar[] | null, tf: Tim
 
     const found = continuationAfter(bars, e, last, origin, move, a);
     if (!found) continue; // this impulse's structure failed: an older one may still hold
-    const { R, S, sweep, mss, confirm, eqLows, pierced } = found;
+    if (!found.sweep) return []; // the newest intact impulse decides: not swept yet, nothing to trade
+    const { R, S, sweep, confirm, eqLows, pierced } = found;
     const H = R - S;
-    const common = {
-      tf, trend, flowBars: bars, penalty: pierced ? 10 : 0,
-      structure: 0.7 * Math.min(1, move / (4 * a)) + 0.3 * Math.min(1, eqLows / 3),
-    };
-    const pool = eqLows >= 2 ? `${eqLows} equal lows` : 'range low';
-    const weak = pierced ? ' · range high taken first (weaker)' : '';
+    const strength = continuationStrength({ dir, bars, lower, lowerTf, tf, found, a, move, aligned: trend === sign(dir) });
+    const side = long ? 'low' : 'high';
+    const pool = eqLows >= 2 ? `${eqLows} equal ${side}s` : `range ${side}`;
+    const weak = pierced ? ` · range ${long ? 'high' : 'low'} taken first (weaker)` : '';
     const impulse = `${(move / a).toFixed(1)} ATR impulse`;
+    // TP1 the range's far side (or 1.5R when that is closer); TP2 the far side + 1.5× the range height.
     const tp = (entry: number, sl: number) => {
       const risk = entry - sl;
       const tp1 = R - entry >= 0.5 * risk ? R : entry + 1.5 * risk;
-      return { tp1, tp2: Math.max(R + 1.5 * H, tp1 + risk) };
+      return { tp1: px(tp1), tp2: px(Math.max(R + 1.5 * H, tp1 + risk)) };
+    };
+    const extra = {
+      tf, trend, flowBars: raw, structure: 0, volume: 0, score: strength.value, strength,
     };
 
-    let c: Candidate | null = null;
-    if (sweep && confirm !== null) {
-      const b = bars[confirm];
-      const sl = sweep.low - 0.1 * a;
-      const vSweep = bars[sweep.i].v / (avgVol(bars, sweep.i) || Infinity);
-      const vShift = b.v / (avgVol(bars, confirm) || Infinity);
-      c = candidate('longContinuationSweep', 'LONG', 'ACTIVE', bars[e].t, b.c, sl, {
-        ...common, tp: tp(b.c, sl), volume: (vSweep + vShift - 2) / 4, flowAt: confirm, maxRisk: 3 * a,
-        note: `${impulse}, ${pool} swept, structure shifted up${weak}`,
+    let c: Candidate | null;
+    if (confirm !== null) {
+      // Back inside after the sweep: enter on that close, stop behind the wick's extreme.
+      const entry = bars[confirm].c, sl = sweep.low - SL_BUFFER_ATR * a;
+      c = candidate(strategy, dir, 'ACTIVE', bars[e].t, px(entry), px(sl), {
+        ...extra, tp: tp(entry, sl), flowAt: confirm, maxRisk: 3 * a,
+        note: `${impulse}, ${pool} swept, closed back inside the range${weak}`,
       });
-    } else if (sweep) {
-      // Swept: the trigger is a close above the last lower high.
-      const sl = sweep.low - 0.1 * a;
-      c = candidate('longContinuationSweep', 'LONG', 'FORMING', bars[e].t, mss, sl, {
-        ...common, tp: tp(mss, sl), volume: 0.25, flowAt: 0, maxRisk: 3 * a,
-        note: `${impulse}, ${pool} swept, waiting for the structure shift${weak}`,
-      });
-    } else if (price > S && price - S <= a) {
-      // Coming down to the liquidity under the range. The stop sits under the impulse's
-      // origin, so the sweep itself doesn't invalidate the setup.
-      const sl = origin - 0.1 * a;
-      c = candidate('longContinuationSweep', 'LONG', 'FORMING', bars[e].t, S, sl, {
-        ...common, tp: tp(S, sl), volume: 0.25, flowAt: 0,
-        note: `${impulse}, ${Math.round(((bars[e].h - S) / move) * 100)}% pullback, price nearing the ${pool}${weak}`,
+    } else {
+      // Swept, still outside: the trigger is a close back above the range low. Until then the
+      // only level is the impulse's origin (where the structure fails) — the real stop goes
+      // behind the wick once price is back inside.
+      // Targets as the trade will have them: from the wick so far, not the far-away origin.
+      const sl = origin - SL_BUFFER_ATR * a;
+      c = candidate(strategy, dir, 'FORMING', bars[e].t, px(S), px(sl), {
+        ...extra, tp: tp(S, sweep.low - SL_BUFFER_ATR * a), flowAt: 0,
+        note: `${impulse}, ${pool} swept, waiting for a close back inside (stop then behind the wick)${weak}`,
       });
     }
     return c ? [c] : []; // the newest intact impulse decides
   }
   return [];
 }
+
+/** Long continuation after a liquidity sweep (see `detectContinuationSweep`). */
+export const detectLongContinuationSweep = (bars: readonly Bar[] | null, tf: Timeframe, price: number, k1h: readonly Bar[] | null = null, lower: readonly Bar[] | null = null, lowerTf: Timeframe = tf): Candidate[] =>
+  detectContinuationSweep('LONG', bars, tf, price, k1h, lower, lowerTf);
+
+/** Short continuation after a liquidity sweep: the long's exact mirror (sweep above the range high). */
+export const detectShortContinuationSweep = (bars: readonly Bar[] | null, tf: Timeframe, price: number, k1h: readonly Bar[] | null = null, lower: readonly Bar[] | null = null, lowerTf: Timeframe = tf): Candidate[] =>
+  detectContinuationSweep('SHORT', bars, tf, price, k1h, lower, lowerTf);
 
 /**
  * Short after a fakeout and liquidity sweep: higher lows compress into a resistance
@@ -693,15 +798,21 @@ export function detectShortFakeoutSweep(bars: readonly Bar[] | null, tf: Timefra
   return [];
 }
 
-/** Every detector over one coin (the price-action pair on 1m, 5m and 15m built from 5m). */
+/** Every detector over one coin (the price-action ones on 1m, 5m and 15m built from 5m; each with the next lower timeframe for RSI). */
 export function detectAll({ k1h, k5m, k1m = null, price }: DetectInput): Candidate[] {
-  const pa: Array<[Timeframe, readonly Bar[] | null]> = [['1m', k1m], ['5m', k5m], ['15m', k5m ? resample(k5m, 15 * 60_000) : null]];
+  const pa: Array<[Timeframe, readonly Bar[] | null, readonly Bar[] | null, Timeframe]> = [
+    ['1m', k1m, null, '1m'], ['5m', k5m, k1m, '1m'], ['15m', k5m ? resample(k5m, 15 * 60_000) : null, k5m, '5m'],
+  ];
   return [
     ...detectBreakout(k1h, price),
     ...detectDefense(k1h, price),
     ...detectOrderBlock(k1h, price),
     ...detectSweepFvg(k1h, price),
     ...detectSpikeFade(k5m, price, k1h),
-    ...pa.flatMap(([tf, bars]) => [...detectLongContinuationSweep(bars, tf, price, k1h), ...detectShortFakeoutSweep(bars, tf, price, k1h)]),
+    ...pa.flatMap(([tf, bars, lower, lowerTf]) => [
+      ...detectLongContinuationSweep(bars, tf, price, k1h, lower, lowerTf),
+      ...detectShortContinuationSweep(bars, tf, price, k1h, lower, lowerTf),
+      ...detectShortFakeoutSweep(bars, tf, price, k1h),
+    ]),
   ];
 }

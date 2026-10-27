@@ -19,7 +19,7 @@ import { CARDS_TABLE, FormationCard, FormationTable, ViewSwitch } from './parts'
 
 const MAX_FEED_CARDS = 120;
 const MAX_FEED_ROWS = 300;
-const FEED_FIELDS: readonly TableField[] = ['symbol', 'venue', 'strategy', 'tf', 'stage', 'dir', 'quality', 'potential', 'price', 'entry', 'sl', 'tp1', 'tp2', 'distance', 'volume', 'age', 'flags'];
+const FEED_FIELDS: readonly TableField[] = ['symbol', 'venue', 'strategy', 'tf', 'stage', 'dir', 'quality', 'strength', 'potential', 'price', 'entry', 'sl', 'tp1', 'tp2', 'distance', 'volume', 'age', 'flags'];
 const QUALITY_OPTIONS: ReadonlyArray<{ value: Quality; label: string }> = [{ value: 'LOW', label: 'Quality ≥ LOW' }, { value: 'MID', label: 'Quality ≥ MID' }, { value: 'HIGH', label: 'Quality ≥ HIGH' }];
 const POTENTIAL_OPTIONS = [0, 1, 2, 3, 5].map((v) => ({ value: v, label: v ? `Potential ≥ ${v}%` : 'Any potential' }));
 

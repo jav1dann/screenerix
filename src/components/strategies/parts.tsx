@@ -15,7 +15,7 @@ import type { TradeLevels } from '@/lib/strategies/chartLines';
 import { TABLE_FIELDS } from '@/lib/strategies/store';
 import type { TableField, WorkspaceSettings } from '@/lib/strategies/store';
 import type { Timeframe } from '@/lib/market/exchanges';
-import { distanceBps } from '@/lib/strategies/types';
+import { distanceBps, qualityOf } from '@/lib/strategies/types';
 import type { Direction, Formation, Quality, Stage } from '@/lib/strategies/types';
 
 export const QUALITY_COLOR: Record<Quality, string> = { LOW: '#8B8D98', MID: '#E5B931', HIGH: '#30A46C' };
@@ -103,12 +103,35 @@ export function tradeLevelsOf(f: Pick<Formation, 'entry' | 'sl' | 'tp1' | 'tp2' 
   };
 }
 
-function Level({ k, v }: { k: 'entry' | 'sl' | 'tp1' | 'tp2'; v: number }) {
-  const label = { entry: 'Entry', sl: 'SL', tp1: 'TP1', tp2: 'TP2' }[k];
+/** A continuation setup still outside the range after its sweep: its "SL" is only where the structure fails. */
+const provisionalStop = (f: Pick<Formation, 'strategy' | 'stage'>) =>
+  f.stage === 'FORMING' && (f.strategy === 'longContinuationSweep' || f.strategy === 'shortContinuationSweep');
+const PROVISIONAL_HINT = 'Invalidation (impulse origin) while price is outside the range after the sweep. The stop goes behind the sweep wick once price closes back inside.';
+
+function Level({ k, v, provisional }: { k: 'entry' | 'sl' | 'tp1' | 'tp2'; v: number; provisional?: boolean }) {
+  const label = provisional ? 'Invalid.' : { entry: 'Entry', sl: 'SL', tp1: 'TP1', tp2: 'TP2' }[k];
   return (
-    <span className="flex flex-col">
+    <span className="flex flex-col" title={provisional ? PROVISIONAL_HINT : undefined}>
       <span className="text-[9px] font-bold uppercase tracking-wide" style={{ color: LEVEL_COLORS[k] }}>{label}</span>
       <span className="tabular-nums text-sx-text" data-level={k}>{fmtPrice(v)}</span>
+    </span>
+  );
+}
+
+const STRENGTH_HINT = 'Strength index: how strongly the market confirmed the sweep — volume, the reclaim candle, lower-timeframe RSI, the liquidity pool, structure and trend. A heuristic score, not a back-tested win rate.';
+
+/** The strength index ("индекс силы") as a small meter; `compact` for table cells. */
+export function StrengthMeter({ strength, compact = false }: { strength: NonNullable<Formation['strength']>; compact?: boolean }) {
+  const color = QUALITY_COLOR[qualityOf(strength.value)];
+  const title = `${STRENGTH_HINT}\n\n${strength.factors.length ? strength.factors.map((x) => `• ${x}`).join('\n') : 'No confirming factors yet.'}`;
+  return (
+    <span className="inline-flex min-w-0 items-center gap-1.5" title={title} data-strength={strength.value}>
+      {!compact && <span className="shrink-0 text-[9px] font-bold uppercase tracking-wide text-sx-muted">Strength</span>}
+      <span className="relative h-1.5 w-12 shrink-0 overflow-hidden rounded-full bg-white/[0.08]" aria-hidden="true">
+        <span className="absolute inset-y-0 left-0 rounded-full" style={{ width: `${strength.value}%`, background: color }} />
+      </span>
+      <b className="shrink-0 tabular-nums" style={{ color }}>{strength.value}%</b>
+      {!compact && strength.factors.length > 0 && <span className="truncate text-sx-muted" data-strength-factors>{strength.factors.slice(0, 2).join(' · ')}</span>}
     </span>
   );
 }
@@ -140,8 +163,9 @@ export const FormationCard = memo(function FormationCard({ f, now, onOpen, actio
         <Flags f={f} />
       </div>
       <div className="grid grid-cols-4 gap-1.5 rounded-lg bg-white/[0.03] px-2 py-1.5">
-        <Level k="entry" v={f.entry} /><Level k="sl" v={f.sl} /><Level k="tp1" v={f.tp1} /><Level k="tp2" v={f.tp2} />
+        <Level k="entry" v={f.entry} /><Level k="sl" v={f.sl} provisional={provisionalStop(f)} /><Level k="tp1" v={f.tp1} /><Level k="tp2" v={f.tp2} />
       </div>
+      {f.strength && <div className="flex min-w-0 items-center" data-strength-row><StrengthMeter strength={f.strength} /></div>}
       <footer className="flex flex-wrap items-center gap-x-3 gap-y-0.5 tabular-nums text-sx-muted">
         <span title="Move from entry to TP2">Potential <b className="text-sx-up" data-potential={f.potential.toFixed(4)}>{f.potential.toFixed(2)}%</b></span>
         <span title="Distance from the last price to entry">To entry <b className="text-sx-text">{fmtBps(distanceBps(f, f.price))}</b></span>
@@ -165,7 +189,10 @@ function cell(f: Formation, k: TableField, now: number): ReactNode {
     case 'potential': return <span className="text-sx-up" data-potential={f.potential.toFixed(4)}>{f.potential.toFixed(2)}%</span>;
     case 'price': return fmtPrice(f.price);
     case 'entry': return <span style={{ color: LEVEL_COLORS.entry }}>{fmtPrice(f.entry)}</span>;
-    case 'sl': return <span style={{ color: LEVEL_COLORS.sl }}>{fmtPrice(f.sl)}</span>;
+    case 'sl': return provisionalStop(f)
+      ? <span style={{ color: LEVEL_COLORS.sl }} title={PROVISIONAL_HINT}>{fmtPrice(f.sl)}<span className="text-sx-muted">*</span></span>
+      : <span style={{ color: LEVEL_COLORS.sl }}>{fmtPrice(f.sl)}</span>;
+    case 'strength': return f.strength ? <StrengthMeter strength={f.strength} compact /> : <span className="text-sx-muted">—</span>;
     case 'tp1': return <span style={{ color: LEVEL_COLORS.tp1 }}>{fmtPrice(f.tp1)}</span>;
     case 'tp2': return <span style={{ color: LEVEL_COLORS.tp2 }}>{fmtPrice(f.tp2)}</span>;
     case 'distance': return fmtBps(distanceBps(f, f.price));

@@ -1,8 +1,8 @@
 /** Strategy formations: shared by the server engine, the API and the dashboard. */
 import type { ExchangeId, Timeframe } from '@/lib/market/exchanges';
 
-export type StrategyId = 'breakout' | 'defense' | 'obRetest' | 'sweepFvg' | 'spikeFade' | 'longContinuationSweep' | 'shortFakeoutSweep';
-export const STRATEGY_IDS: readonly StrategyId[] = ['breakout', 'defense', 'obRetest', 'sweepFvg', 'spikeFade', 'longContinuationSweep', 'shortFakeoutSweep'];
+export type StrategyId = 'breakout' | 'defense' | 'obRetest' | 'sweepFvg' | 'spikeFade' | 'longContinuationSweep' | 'shortContinuationSweep' | 'shortFakeoutSweep';
+export const STRATEGY_IDS: readonly StrategyId[] = ['breakout', 'defense', 'obRetest', 'sweepFvg', 'spikeFade', 'longContinuationSweep', 'shortContinuationSweep', 'shortFakeoutSweep'];
 export const isStrategyId = (v: unknown): v is StrategyId => typeof v === 'string' && (STRATEGY_IDS as readonly string[]).includes(v);
 
 export type Stage = 'FORMING' | 'ACTIVE' | 'LATE' | 'INVALIDATED';
@@ -32,6 +32,12 @@ export interface Candidate {
   dailyAligned: boolean;
   /** Short human description, e.g. "3-touch resistance". */
   note: string;
+  /**
+   * Strength index ("индекс силы", continuation strategies): 0–100 from the sweep's volume, the
+   * reclaim's momentum, lower-timeframe RSI and structure, with the factors behind it. A heuristic,
+   * not a back-tested probability. Also the setup's `score`.
+   */
+  strength?: { value: number; factors: string[] };
 }
 
 export interface Formation extends Omit<Candidate, 'stage'> {

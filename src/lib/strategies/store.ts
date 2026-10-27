@@ -20,7 +20,7 @@ export const FEED_SORTS: ReadonlyArray<{ value: FeedSort; label: string }> = [
 ];
 export type ViewMode = 'cards' | 'table';
 
-export type TableField = 'symbol' | 'strategy' | 'tf' | 'venue' | 'stage' | 'dir' | 'quality' | 'potential' | 'price' | 'entry' | 'sl' | 'tp1' | 'tp2' | 'distance' | 'volume' | 'age' | 'flags';
+export type TableField = 'symbol' | 'strategy' | 'tf' | 'venue' | 'stage' | 'dir' | 'quality' | 'strength' | 'potential' | 'price' | 'entry' | 'sl' | 'tp1' | 'tp2' | 'distance' | 'volume' | 'age' | 'flags';
 export const TABLE_FIELDS: ReadonlyArray<{ id: TableField; label: string; hint: string }> = [
   { id: 'symbol', label: 'Symbol', hint: 'Coin' },
   { id: 'strategy', label: 'Strategy', hint: 'Algorithm that found the setup' },
@@ -29,6 +29,7 @@ export const TABLE_FIELDS: ReadonlyArray<{ id: TableField; label: string; hint: 
   { id: 'stage', label: 'Stage', hint: 'Forming / Active / Late / Invalidated' },
   { id: 'dir', label: 'Direction', hint: 'Long or Short' },
   { id: 'quality', label: 'Quality', hint: 'Setup quality and score (0–100)' },
+  { id: 'strength', label: 'Strength', hint: 'Strength index of continuation setups (0–100): sweep volume, reclaim momentum, lower-timeframe RSI, structure' },
   { id: 'potential', label: 'Potential', hint: 'Move from entry to TP2' },
   { id: 'price', label: 'Price', hint: 'Last price' },
   { id: 'entry', label: 'Entry', hint: 'Entry level' },
@@ -41,7 +42,7 @@ export const TABLE_FIELDS: ReadonlyArray<{ id: TableField; label: string; hint: 
   { id: 'flags', label: 'Confirmations', hint: 'Order flow (Δ > 1σ) and daily-trend alignment' },
 ];
 const FIELD_IDS = new Set(TABLE_FIELDS.map((f) => f.id));
-export const DEFAULT_FIELDS: readonly TableField[] = ['symbol', 'tf', 'stage', 'dir', 'quality', 'potential', 'price', 'entry', 'sl', 'tp1', 'tp2', 'distance', 'volume', 'age'];
+export const DEFAULT_FIELDS: readonly TableField[] = ['symbol', 'tf', 'stage', 'dir', 'quality', 'strength', 'potential', 'price', 'entry', 'sl', 'tp1', 'tp2', 'distance', 'volume', 'age'];
 
 export const CHART_TFS: readonly Timeframe[] = ['1m', '5m', '15m', '1h', '4h'];
 /** Chart timeframe options: a fixed one, or each formation's own ('setup'). */
