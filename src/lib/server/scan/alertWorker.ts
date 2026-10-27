@@ -5,7 +5,7 @@
  * with complex alerts are marked hot so their candles stay fresh.
  */
 import { describeCondition, METRIC_BY_ID } from '@/lib/alerts/types';
-import type { Alert, Metric } from '@/lib/alerts/types';
+import type { Alert, AlertDetail, Metric } from '@/lib/alerts/types';
 import { complexFires, complexState, priceFires } from '@/lib/alerts/rules';
 import { deliver } from '@/lib/alerts/server/deliver';
 import { allAlerts, recordFire } from '@/lib/alerts/server/store';
@@ -51,14 +51,14 @@ export function startAlertWorker(venue: ExchangeId, market: MarketWorker): Alert
         lastPrice.set(a.id, coin.price);
         if (!priceFires(a, prev, coin.price, now)) continue;
         const text = `Price ${a.price.direction === 'above' ? 'rose to' : 'fell to'} ${fmtPrice(coin.price)} (alert at ${fmtPrice(a.price.level)})`;
-        fire(a, coin.price, text, now);
+        fire(a, coin.price, text, now, { kind: 'price', direction: a.price.direction, level: a.price.level });
       } else if (a.kind === 'complex' && a.conditions?.length) {
         const { holds, values } = complexState(a.conditions, coin, now);
         const before = held.get(a.id) ?? false;
         held.set(a.id, holds);
         if (!complexFires(a, holds, before, now)) continue;
         const text = a.conditions.map((c, i) => `${describeCondition(c)} (now ${fmtVal(c.metric, values[i] as number)})`).join(' AND ');
-        fire(a, coin.price, text, now);
+        fire(a, coin.price, text, now, { kind: 'complex', checks: a.conditions.map((condition, i) => ({ condition, value: values[i] ?? null })) });
       }
     }
     market.setHot([...hot], 'alerts');
@@ -68,8 +68,8 @@ export function startAlertWorker(venue: ExchangeId, market: MarketWorker): Alert
     for (const id of held.keys()) if (!live.has(id)) held.delete(id);
   }
 
-  function fire(a: Alert, price: number, text: string, now: number): void {
-    const r = recordFire(a, price, text, now);
+  function fire(a: Alert, price: number, text: string, now: number, detail: AlertDetail): void {
+    const r = recordFire(a, price, text, now, detail);
     if (!r) return;
     fired++;
     void deliver(r.event).catch((e) => console.error(`[alerts] delivery failed: ${(e as Error).message}`));

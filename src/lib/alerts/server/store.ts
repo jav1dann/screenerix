@@ -8,7 +8,7 @@ import { EventEmitter } from 'node:events';
 import { existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { DATA_DIR } from '@/lib/auth/session';
-import type { Alert, AlertEvent, AlertInput } from '../types';
+import type { Alert, AlertDetail, AlertEvent, AlertInput } from '../types';
 
 /** Firings kept per user (the "Recent triggers" list). */
 export const MAX_EVENTS_PER_USER = 500;
@@ -115,7 +115,7 @@ export function removeAlert(userId: string, id: string): boolean {
  * Record a firing: the alert's trigger count / time (one-time alerts are archived) and the
  * event. Synchronous from read to write, so one alert never fires twice for one price pass.
  */
-export function recordFire(alert: Alert, price: number, text: string, now = Date.now()): { alert: Alert; event: AlertEvent } | null {
+export function recordFire(alert: Alert, price: number, text: string, now = Date.now(), detail?: AlertDetail): { alert: Alert; event: AlertEvent } | null {
   const updated = patchAlert(alert.userId, alert.id, {
     lastTriggeredAt: now, triggerCount: alert.triggerCount + 1, updatedAt: now,
     ...(alert.mode === 'once' ? { status: 'archived' as const, archivedReason: 'fired' as const } : {}),
@@ -123,7 +123,7 @@ export function recordFire(alert: Alert, price: number, text: string, now = Date
   if (!updated) return null;
   const event: AlertEvent = {
     id: randomUUID(), alertId: alert.id, userId: alert.userId, at: now, kind: alert.kind, exchange: alert.exchange,
-    symbol: alert.symbol, price, text, sound: alert.sound, channels: alert.channels,
+    symbol: alert.symbol, price, text, sound: alert.sound, channels: alert.channels, ...(detail ? { detail } : {}),
   };
   const all = events.load();
   const mine = all.filter((e) => e.userId === alert.userId);

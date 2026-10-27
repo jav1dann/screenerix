@@ -48,6 +48,11 @@ export interface Alert {
 /** What the browser sends to create / edit an alert. */
 export type AlertInput = Pick<Alert, 'kind' | 'exchange' | 'symbol' | 'price' | 'conditions' | 'channels' | 'sound' | 'mode' | 'repeatMinutes' | 'note'> & { id?: string };
 
+/** What triggered, structured so notifications can be worded in the user's language. */
+export type AlertDetail =
+  | { kind: 'price'; direction: 'above' | 'below'; level: number }
+  | { kind: 'complex'; checks: Array<{ condition: Condition; value: number | null }> };
+
 /** One firing, kept for the "Recent triggers" list and pushed to open terminals. */
 export interface AlertEvent {
   id: string;
@@ -62,6 +67,8 @@ export interface AlertEvent {
   text: string;
   sound: AlertSound;
   channels: AlertChannels;
+  /** Absent on events recorded before notifications were localized (`text` is used then). */
+  detail?: AlertDetail;
 }
 
 export const MAX_ACTIVE_ALERTS = 100;

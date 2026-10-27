@@ -9,6 +9,7 @@ import { existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSyn
 import { join } from 'node:path';
 import { DAY_MS, proPeriodStart, TRIAL_DAYS } from './access';
 import type { Plan, Role, SessionUser } from './access';
+import type { Lang } from '@/lib/telegram/i18n';
 import { DATA_DIR } from './session';
 
 export interface TelegramLink {
@@ -41,6 +42,8 @@ export interface UserRecord {
   proExpiresAt?: number;
   /** Telegram account linked through the bot (alerts are delivered there). */
   telegram?: TelegramLink;
+  /** Language of the bot's messages and of alert notifications (Telegram, push), picked in the bot. */
+  lang?: Lang;
   /** Bumped on sign-out / password change: older session tokens stop working. */
   sessionVersion: number;
   createdAt: number;
@@ -175,6 +178,9 @@ export function setTelegram(uid: string, link: TelegramLink | null): UserRecord 
   }
   return updateUser(uid, { telegram: link ?? undefined });
 }
+
+/** The account's notification language (bot replies, Telegram and push alerts). */
+export const setLang = (uid: string, lang: Lang): UserRecord | null => updateUser(uid, { lang });
 
 /** Sign-out everywhere: tokens carrying an older version stop working. */
 export function bumpSessionVersion(id: string): void {
