@@ -22,7 +22,7 @@ export interface AlertsSnapshot {
 
 const EMPTY: AlertsSnapshot = {
   loaded: false, alerts: [], events: [], unread: 0,
-  channels: { telegram: { configured: false, linked: false }, push: { configured: false, key: null } },
+  channels: { telegram: { configured: false, linked: false, username: null, name: null, lang: null }, push: { configured: false, key: null } },
 };
 /** Alerts saved in this browser before they moved to the account. */
 const LEGACY_KEY = 'screenerix.alerts.v1';
@@ -90,6 +90,11 @@ function connect(): void {
     const { event } = JSON.parse((m as MessageEvent<string>).data) as { event: EventView };
     set({ events: [event, ...snap.events.filter((e) => e.id !== event.id)].slice(0, 50), unread: snap.unread + 1 });
     fireListeners.forEach((l) => l(event));
+  });
+  // Where a firing was sent (arrives after 'fired'): update it in place — no toast, no unread.
+  es.addEventListener('delivered', (m) => {
+    const { event } = JSON.parse((m as MessageEvent<string>).data) as { event: EventView };
+    set({ events: snap.events.map((e) => (e.id === event.id ? event : e)) });
   });
   // After a dropped connection the browser reconnects by itself; re-sync what we may have missed.
   es.addEventListener('open', () => { if (snap.loaded) void refreshAlerts(); });

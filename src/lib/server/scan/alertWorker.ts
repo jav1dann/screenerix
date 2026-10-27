@@ -8,7 +8,7 @@ import { describeCondition, METRIC_BY_ID } from '@/lib/alerts/types';
 import type { Alert, AlertDetail, Metric } from '@/lib/alerts/types';
 import { complexFires, complexState, priceFires } from '@/lib/alerts/rules';
 import { deliver } from '@/lib/alerts/server/deliver';
-import { allAlerts, recordFire } from '@/lib/alerts/server/store';
+import { allAlerts, recordDelivery, recordFire } from '@/lib/alerts/server/store';
 import { hasAccess } from '@/lib/auth/access';
 import { findById } from '@/lib/auth/users';
 import { fmtPrice } from '@/lib/format';
@@ -72,7 +72,9 @@ export function startAlertWorker(venue: ExchangeId, market: MarketWorker): Alert
     const r = recordFire(a, price, text, now, detail);
     if (!r) return;
     fired++;
-    void deliver(r.event).catch((e) => console.error(`[alerts] delivery failed: ${(e as Error).message}`));
+    void deliver(r.event)
+      .then((d) => { if (d.telegram || d.push !== undefined) recordDelivery(r.event, d); })
+      .catch((e) => console.error(`[alerts] delivery failed: ${(e as Error).message}`));
   }
 
   const off = market.onPrices(() => {

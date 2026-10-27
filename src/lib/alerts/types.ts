@@ -48,6 +48,13 @@ export interface Alert {
 /** What the browser sends to create / edit an alert. */
 export type AlertInput = Pick<Alert, 'kind' | 'exchange' | 'symbol' | 'price' | 'conditions' | 'channels' | 'sound' | 'mode' | 'repeatMinutes' | 'note'> & { id?: string };
 
+/**
+ * Outcome per chosen channel: Telegram `sent` / `failed` / `unlinked` (chosen but no chat linked);
+ * push = devices that accepted it (0: none subscribed or all failed). The terminal shows the browser
+ * notification itself, so it isn't tracked here.
+ */
+export interface AlertDelivery { telegram?: 'sent' | 'failed' | 'unlinked'; push?: number }
+
 /** What triggered, structured so notifications can be worded in the user's language. */
 export type AlertDetail =
   | { kind: 'price'; direction: 'above' | 'below'; level: number }
@@ -69,6 +76,8 @@ export interface AlertEvent {
   channels: AlertChannels;
   /** Absent on events recorded before notifications were localized (`text` is used then). */
   detail?: AlertDetail;
+  /** Where it went, filled in once delivery finished (absent while sending, and on older events). */
+  delivery?: AlertDelivery;
 }
 
 export const MAX_ACTIVE_ALERTS = 100;
@@ -145,6 +154,11 @@ export function describeCondition(c: Condition): string {
   const v = m.unit === '%' ? `${c.value > 0 && c.op !== 'abs>' ? '+' : ''}${num(c.value)}%` : m.unit === '×' ? `${num(c.value)}×` : num(c.value);
   return `${m.windowed ? `${c.window} ` : ''}${m.short} ${op} ${v}`;
 }
+
+/** How the dashboard shows an alert: watching, paused by the user, or archived after firing (one-time). */
+export type AlertDisplayStatus = 'active' | 'paused' | 'triggered';
+export const displayStatus = (a: Pick<Alert, 'status' | 'archivedReason'>): AlertDisplayStatus =>
+  a.status === 'active' ? 'active' : a.archivedReason === 'fired' ? 'triggered' : 'paused';
 
 /** One line for lists and notifications. */
 export function describeAlert(a: Pick<Alert, 'kind' | 'price' | 'conditions'>): string {

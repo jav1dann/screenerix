@@ -9,7 +9,7 @@ import { useRouter } from 'next/navigation';
 import { useEffect, useEffectEvent, useState, useSyncExternalStore, useTransition } from 'react';
 import type { FormEvent, ReactNode } from 'react';
 import { createPortal } from 'react-dom';
-import { changeEmail, changePassword, disconnectTelegram, getAccount, setPassword, unlinkGoogle } from '@/app/actions/account';
+import { changeEmail, changePassword, disconnectTelegram, getAccount, setNotifyLanguage, setPassword, unlinkGoogle } from '@/app/actions/account';
 import type { AccountResult, AccountView } from '@/app/actions/account';
 import { StatusPill } from '@/components/billing/PaymentStep';
 import TelegramIcon from '@/components/shared/brand/TelegramIcon';
@@ -20,6 +20,7 @@ import { openBilling } from '@/lib/billing/billingUi';
 import { fmtDay, fmtUsdt } from '@/lib/billing/format';
 import { PERIODS } from '@/lib/billing/plans';
 import { openTelegramLink, TELEGRAM_BOT_USERNAME } from '@/lib/telegram/client';
+import { LANG_LABEL, LANGS } from '@/lib/telegram/i18n';
 
 const SECTIONS: Array<{ id: AccountSection; label: string; icon: ReactNode }> = [
   { id: 'email', label: 'Email & password', icon: <KeyRound size={15} aria-hidden="true" /> },
@@ -250,6 +251,21 @@ function LinkedSection({ account, apply, setAccount, setFlash }: {
         {linked
           ? <button type="button" className="bx-btn" disabled={busy} onClick={() => start(async () => { apply(await disconnectTelegram()); })} data-telegram-disconnect>Disconnect</button>
           : <button type="button" className="bx-btn bx-btn-primary" disabled={busy || !account.telegram.configured} onClick={onTelegram} data-telegram-connect>{waiting ? 'Open Telegram again' : 'Connect Telegram'}</button>}
+      </div>
+      <div className="ac-lang" data-alert-language>
+        <span className="ac-link-text">
+          <span className="ac-link-name">Alert language</span>
+          <span className="bx-fine">Telegram and push alerts, and the bot’s replies. You can also change it in the bot with /language.</span>
+        </span>
+        <div className="ac-langs" role="radiogroup" aria-label="Alert language">
+          {LANGS.map((l) => (
+            <button key={l} type="button" role="radio" className="ac-lang-opt" aria-checked={(account.lang ?? 'en') === l} disabled={busy}
+              onClick={() => { if (account.lang !== l) start(async () => { apply(await setNotifyLanguage(l).catch(() => ({ ok: false as const, error: 'Couldn’t reach the server. Try again.' }))); }); }}
+              data-lang={l}>
+              {LANG_LABEL[l]}
+            </button>
+          ))}
+        </div>
       </div>
     </Card>
   );

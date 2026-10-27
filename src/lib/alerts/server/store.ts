@@ -8,12 +8,12 @@ import { EventEmitter } from 'node:events';
 import { existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { DATA_DIR } from '@/lib/auth/session';
-import type { Alert, AlertDetail, AlertEvent, AlertInput } from '../types';
+import type { Alert, AlertDelivery, AlertDetail, AlertEvent, AlertInput } from '../types';
 
 /** Firings kept per user (the "Recent triggers" list). */
 export const MAX_EVENTS_PER_USER = 500;
 
-export type AlertChange = { type: 'alert'; alert: Alert } | { type: 'removed'; id: string } | { type: 'event'; event: AlertEvent };
+export type AlertChange = { type: 'alert'; alert: Alert } | { type: 'removed'; id: string } | { type: 'event'; event: AlertEvent } | { type: 'delivered'; event: AlertEvent };
 
 function fileStore<T>(name: string, key: string) {
   const file = () => join(DATA_DIR, name);
@@ -135,3 +135,13 @@ export function recordFire(alert: Alert, price: number, text: string, now = Date
 
 export const eventsOf = (userId: string, limit = 50): AlertEvent[] =>
   events.load().filter((e) => e.userId === userId).sort((a, b) => b.at - a.at).slice(0, limit);
+
+/** Store where a firing was delivered (after `deliver`), and tell open terminals. */
+export function recordDelivery(event: AlertEvent, delivery: AlertDelivery): void {
+  const all = events.load();
+  const i = all.findIndex((e) => e.id === event.id);
+  if (i < 0) return; // trimmed meanwhile
+  const next = { ...all[i], delivery };
+  events.save(all.map((e, k) => (k === i ? next : e)));
+  emit(event.userId, { type: 'delivered', event: next });
+}

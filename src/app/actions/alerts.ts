@@ -1,7 +1,7 @@
 'use server';
 
 /**
- * Alerts API for the terminal: list, create / edit, archive / restore, delete, recent firings,
+ * Alerts API for the terminal: list, create / edit, pause / resume (archive / restore), delete, recent firings,
  * a one-time import of alerts kept in the browser before alerts moved to the server, and web
  * push subscriptions. Everything is scoped to the signed-in account; an expired account can
  * still read and delete but not create alerts.
@@ -15,6 +15,7 @@ import type { Alert, AlertEvent } from '@/lib/alerts/types';
 import { requireInstrument } from '@/lib/market/server/marketData';
 import { addSubscription, pushPublicKey, removeSubscription } from '@/lib/push/server';
 import { telegramConfigured } from '@/lib/telegram/bot';
+import type { Lang } from '@/lib/telegram/i18n';
 import { findById } from '@/lib/auth/users';
 
 export type AlertsResult<T> = { ok: true; data: T } | { ok: false; error: string };
@@ -29,7 +30,10 @@ const viewEvent = ({ userId: _u, ...e }: AlertEvent) => { void _u; return e; };
 export interface AlertsState {
   alerts: AlertView[];
   events: Array<Omit<AlertEvent, 'userId'>>;
-  channels: { telegram: { configured: boolean; linked: boolean }; push: { configured: boolean; key: string | null } };
+  channels: {
+    telegram: { configured: boolean; linked: boolean; username: string | null; name: string | null; lang: Lang | null };
+    push: { configured: boolean; key: string | null };
+  };
 }
 
 export async function getAlertsState(): Promise<AlertsResult<AlertsState>> {
@@ -41,7 +45,10 @@ export async function getAlertsState(): Promise<AlertsResult<AlertsState>> {
     data: {
       alerts: alertsOf(user.id).map(view),
       events: eventsOf(user.id, 50).map(viewEvent),
-      channels: { telegram: { configured: telegramConfigured(), linked: Boolean(rec?.telegram) }, push: { configured: pushPublicKey() !== null, key: pushPublicKey() } },
+      channels: {
+        telegram: { configured: telegramConfigured(), linked: Boolean(rec?.telegram), username: rec?.telegram?.username ?? null, name: rec?.telegram?.firstName ?? null, lang: rec?.lang ?? null },
+        push: { configured: pushPublicKey() !== null, key: pushPublicKey() },
+      },
     },
   };
 }
@@ -56,7 +63,7 @@ export async function saveAlert(raw: unknown): Promise<AlertsResult<AlertView>> 
   const editing = input.id ? alertsOf(user.id).find((a) => a.id === input.id) : undefined;
   if (input.id && !editing) return { ok: false, error: 'That alert no longer exists.' };
   if (!editing || editing.status !== 'active') {
-    if (activeCount(user.id) >= MAX_ACTIVE_ALERTS) return { ok: false, error: `You have ${MAX_ACTIVE_ALERTS} active alerts — archive or delete some first.` };
+    if (activeCount(user.id) >= MAX_ACTIVE_ALERTS) return { ok: false, error: `You have ${MAX_ACTIVE_ALERTS} active alerts — pause or delete some first.` };
   }
   try {
     await requireInstrument(input.exchange, input.symbol);
@@ -67,6 +74,7 @@ export async function saveAlert(raw: unknown): Promise<AlertsResult<AlertView>> 
   return { ok: true, data: view(storeAlert(user.id, input)) };
 }
 
+/** Pause: stop checking it (shown as Paused; status 'archived', reason 'manual'). */
 export async function archiveAlert(id: string): Promise<AlertsResult<AlertView>> {
   const user = await getCurrentUser();
   if (!user) return SIGNED_OUT;
@@ -74,11 +82,12 @@ export async function archiveAlert(id: string): Promise<AlertsResult<AlertView>>
   return a ? { ok: true, data: view(a) } : { ok: false, error: 'That alert no longer exists.' };
 }
 
+/** Resume a paused alert, or re-arm one that fired. */
 export async function restoreAlert(id: string): Promise<AlertsResult<AlertView>> {
   const user = await getCurrentUser();
   if (!user) return SIGNED_OUT;
-  if (!hasAccess(user, Date.now())) return { ok: false, error: 'Your plan has ended. Upgrade to Pro to restore alerts.' };
-  if (activeCount(user.id) >= MAX_ACTIVE_ALERTS) return { ok: false, error: `You have ${MAX_ACTIVE_ALERTS} active alerts — archive or delete some first.` };
+  if (!hasAccess(user, Date.now())) return { ok: false, error: 'Your plan has ended. Upgrade to Pro to resume alerts.' };
+  if (activeCount(user.id) >= MAX_ACTIVE_ALERTS) return { ok: false, error: `You have ${MAX_ACTIVE_ALERTS} active alerts — pause or delete some first.` };
   const a = patchAlert(user.id, String(id), { status: 'active', lastTriggeredAt: null, updatedAt: Date.now() });
   return a ? { ok: true, data: view(a) } : { ok: false, error: 'That alert no longer exists.' };
 }

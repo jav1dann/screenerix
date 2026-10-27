@@ -3,7 +3,7 @@
  * inputs reset browser defaults explicitly here.
  */
 /** Reset without background / colour, for filled buttons (keeps their `bg-*` / `text-*` from competing with the reset's). */
-const BTN_BASE = 'box-border m-0 cursor-pointer border-0 p-0 font-[inherit] disabled:cursor-not-allowed';
+export const BTN_BASE = 'box-border m-0 cursor-pointer border-0 p-0 font-[inherit] disabled:cursor-not-allowed';
 export const BTN_RESET = `${BTN_BASE} bg-transparent text-inherit`;
 
 export const ICON_BTN = `${BTN_RESET} grid h-7 w-7 shrink-0 place-items-center rounded-md text-sx-muted transition-colors hover:bg-white/[0.06] hover:text-sx-text focus-visible:outline-2 focus-visible:outline-sx-up disabled:opacity-40 disabled:hover:bg-transparent`;

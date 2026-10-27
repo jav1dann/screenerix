@@ -29,6 +29,7 @@ export async function GET(req: NextRequest) {
       const off = onUserAlerts(user.id, (c: AlertChange) => {
         if (c.type === 'alert') write(`event: alert\ndata: ${JSON.stringify({ alert: strip(c.alert) })}\n\n`);
         else if (c.type === 'removed') write(`event: removed\ndata: ${JSON.stringify({ id: c.id })}\n\n`);
+        else if (c.type === 'delivered') write(`event: delivered\ndata: ${JSON.stringify({ event: strip(c.event) })}\n\n`);
         else write(`event: fired\ndata: ${JSON.stringify({ event: strip(c.event) })}\n\n`);
       });
       const beat = setInterval(() => write(': ping\n\n'), HEARTBEAT_MS);

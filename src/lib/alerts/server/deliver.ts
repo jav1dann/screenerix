@@ -7,20 +7,21 @@ import { findById } from '@/lib/auth/users';
 import { sendPush } from '@/lib/push/server';
 import { sendTelegram } from '@/lib/telegram/bot';
 import { telegramAlert, triggerText, venueText } from '@/lib/telegram/i18n';
-import type { AlertEvent } from '../types';
+import type { AlertDelivery, AlertEvent } from '../types';
 
 const appUrl = () => process.env.AUTH_URL?.trim().replace(/\/+$/, '') || '';
 
-export async function deliver(e: AlertEvent): Promise<void> {
+/** Send to the chosen channels; resolves to where it went (for the dashboard's history). */
+export async function deliver(e: AlertEvent): Promise<AlertDelivery> {
   const user = findById(e.userId);
-  if (!user) return;
+  if (!user) return {};
   const lang = user.lang ?? 'en';
-  const jobs: Array<Promise<unknown>> = [];
-  if (e.channels.telegram && user.telegram) {
-    jobs.push(sendTelegram(user.telegram.id, telegramAlert(e, lang, appUrl())));
-  }
-  if (e.channels.push) {
-    jobs.push(sendPush(e.userId, { title: `${e.symbol} · ${venueText(e.exchange, lang)}`, body: triggerText(e, lang), tag: `alert-${e.alertId}`, url: '/terminal' }));
-  }
-  await Promise.allSettled(jobs);
+  const [telegram, push] = await Promise.all([
+    !e.channels.telegram ? undefined
+      : !user.telegram ? 'unlinked' as const
+        : sendTelegram(user.telegram.id, telegramAlert(e, lang, appUrl())).then((ok) => (ok ? 'sent' as const : 'failed' as const), () => 'failed' as const),
+    !e.channels.push ? undefined
+      : sendPush(e.userId, { title: `${e.symbol} · ${venueText(e.exchange, lang)}`, body: triggerText(e, lang), tag: `alert-${e.alertId}`, url: '/terminal' }).catch(() => 0),
+  ]);
+  return { ...(telegram ? { telegram } : {}), ...(push !== undefined ? { push } : {}) };
 }

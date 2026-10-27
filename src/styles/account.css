@@ -23,6 +23,13 @@
 .ac-link-text{display:flex;flex-direction:column;gap:2px;min-width:0;flex:1}
 .ac-link-name{font-weight:700}
 .ac-link code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:11.5px;color:var(--sx-text);overflow-wrap:anywhere}
+.ac-lang{display:flex;flex-direction:column;gap:8px;padding:12px;border-radius:12px;border:1px solid var(--sx-line);background:rgba(11,12,14,0.4)}
+.ac-langs{display:flex;gap:8px;flex-wrap:wrap}
+.ac-lang-opt{padding:7px 12px;border-radius:999px;border:1px solid var(--sx-line2);background:rgba(255,255,255,0.02);color:var(--sx-muted);font:inherit;font-size:13px;font-weight:600;cursor:pointer;transition:border-color .15s,background .15s,color .15s}
+.ac-lang-opt:hover{color:var(--sx-text);border-color:#3A3E46}
+.ac-lang-opt[aria-checked="true"]{color:var(--sx-text);border-color:var(--sx-up);background:rgba(48,164,108,0.10)}
+.ac-lang-opt:focus-visible{outline:2px solid var(--sx-up);outline-offset:2px}
+.ac-lang-opt:disabled{opacity:.5;cursor:default}
 .ac-plan{display:flex;flex-direction:column;gap:2px}
 .ac-plan-name{font-size:20px;font-weight:800;letter-spacing:-0.02em}
 .bx-note[data-tone="ok"]{background:rgba(48,164,108,0.08);border:1px solid rgba(48,164,108,0.3);color:#9BDDB9}

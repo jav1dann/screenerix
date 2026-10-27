@@ -251,7 +251,7 @@ export default function CreateAlertWizard({ init }: { init: WizardInit }) {
                 hint={push.configured ? 'Arrive even with Screenerix closed (this browser / device).' : 'Push isn’t configured on this server.'}
                 checked={channels.push} disabled={!push.configured} onChange={onPush} />
             </Section>
-            <Section title="Alert mode" hint={mode === 'once' ? 'Fires once, then moves to Archived.' : 'Keeps firing while the condition holds, at most once per interval.'}>
+            <Section title="Alert mode" hint={mode === 'once' ? 'Fires once, then moves to Triggered.' : 'Keeps firing while the condition holds, at most once per interval.'}>
               <div className="flex flex-wrap items-center gap-3">
                 <SegmentedGroup label="Alert mode" options={MODES} value={mode} onChange={setMode} />
                 {mode === 'infinite' && (

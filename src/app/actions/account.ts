@@ -10,11 +10,13 @@ import type { AccessState } from '@/lib/auth/access';
 import { createSession, getCurrentUser } from '@/lib/auth/dal';
 import { googleConfigured } from '@/lib/auth/google';
 import { clearFailures, isThrottled, recordFailure } from '@/lib/auth/throttle';
-import { findByEmail, findById, hashPassword, normEmail, setTelegram, updateUser, verifyPassword } from '@/lib/auth/users';
+import { findByEmail, findById, hashPassword, normEmail, setLang, setTelegram, updateUser, verifyPassword } from '@/lib/auth/users';
 import { ordersOf, toOrderView } from '@/lib/billing/orders';
 import type { OrderView } from '@/lib/billing/orders';
 import { isEmail } from '@/lib/format';
 import { telegramConfigured } from '@/lib/telegram/bot';
+import { isLang } from '@/lib/telegram/i18n';
+import type { Lang } from '@/lib/telegram/i18n';
 
 export interface AccountView {
   name: string;
@@ -22,6 +24,8 @@ export interface AccountView {
   hasPassword: boolean;
   google: { configured: boolean; linked: boolean; sub: string | null; picture: string | null };
   telegram: { configured: boolean; linked: boolean; id: number | null; username: string | null; name: string | null; linkedAt: number | null };
+  /** Language of Telegram / push alerts and bot replies (null: not chosen — English). */
+  lang: Lang | null;
   access: { state: AccessState; until?: number };
   orders: OrderView[];
 }
@@ -49,6 +53,7 @@ function viewOf(id: string): AccountView | null {
       configured: telegramConfigured(), linked: Boolean(u.telegram), id: u.telegram?.id ?? null,
       username: u.telegram?.username ?? null, name: u.telegram?.firstName ?? null, linkedAt: u.telegram?.linkedAt ?? null,
     },
+    lang: u.lang ?? null,
     access: accessOf(u, Date.now()),
     orders: ordersOf(u.id).slice(0, 10).map(toOrderView),
   };
@@ -130,4 +135,13 @@ export async function disconnectTelegram(): Promise<AccountResult> {
   if (!u) return SIGNED_OUT;
   setTelegram(u.id, null);
   return ok(u.id, 'Telegram disconnected.');
+}
+
+/** Language of Telegram / push alerts and bot replies (the bot's /language sets the same field). */
+export async function setNotifyLanguage(lang: Lang): Promise<AccountResult> {
+  const u = await me();
+  if (!u) return SIGNED_OUT;
+  if (!isLang(lang)) return { ok: false, error: 'Choose a language.' };
+  setLang(u.id, lang);
+  return ok(u.id, 'Alert language saved.');
 }
