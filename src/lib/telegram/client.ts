@@ -3,8 +3,14 @@
  * and send the user to the bot, where pressing Start connects the account.
  */
 
-/** The bot's @username for display (`NEXT_PUBLIC_TELEGRAM_BOT_USERNAME`, inlined at build time). */
-export const TELEGRAM_BOT_USERNAME: string | null = process.env.NEXT_PUBLIC_TELEGRAM_BOT_USERNAME?.trim().replace(/^@/, '') || null;
+/** A bot username without "@" (Telegram: 5–32 letters, digits or "_", starting with a letter), else null. */
+export function parseBotUsername(raw: string | undefined): string | null {
+  const name = raw?.trim().replace(/^@/, '') ?? '';
+  return /^[A-Za-z]\w{4,31}$/.test(name) ? name : null;
+}
+
+/** The bot's @username for display (`NEXT_PUBLIC_TELEGRAM_BOT_USERNAME`, inlined at build time; null when unset or invalid). */
+export const TELEGRAM_BOT_USERNAME: string | null = parseBotUsername(process.env.NEXT_PUBLIC_TELEGRAM_BOT_USERNAME);
 
 /**
  * Call synchronously from a click handler. The tab is opened before the request: a window opened

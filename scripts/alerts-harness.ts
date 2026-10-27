@@ -101,12 +101,16 @@ const priceAlert = (uid: string, symbol: string, level: number, channels = NO_PU
 
 async function botChecks(): Promise<{ amina: string; kamran: string }> {
   section('Telegram bot: linking & language');
+  // Misconfigured on purpose: names another bot than the token's (the mock's getMe says sx_test_bot).
+  process.env.NEXT_PUBLIC_TELEGRAM_BOT_USERNAME = 'SomeOtherBot';
   startTelegramBot();
   check('bot registers its command menu in az / en / ru', await waitFor(async () => (await calls()).filter((c) => c.method === 'setMyCommands').length === 3)
     && (await calls()).some((c) => c.method === 'setMyCommands' && c.language_code === 'ru' && c.commands?.some((x) => x.command === 'language' && x.description === 'Сменить язык')));
 
   // Linking without a language yet: confirmation in the guessed language, then the keyboard.
   const amina = (await createUser({ email: 'amina@test.local', name: 'Amina', password: 'amina-pass-1' })).id;
+  const link = await startLink(amina);
+  check('username mismatch: links use the token’s real bot, not the misconfigured name', 'url' in link && link.url.startsWith('https://t.me/sx_test_bot?start='), 'url' in link ? link.url : link.error);
   await say(8001, `/start ${await tokenOf(amina)}`, 'az', 'amina_tg');
   await waitFor(async () => (await sentTo(8001)).length >= 2);
   const [linkedMsg, ask] = await sentTo(8001);

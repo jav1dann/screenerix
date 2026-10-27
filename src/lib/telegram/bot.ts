@@ -14,6 +14,7 @@
  */
 import { randomBytes } from 'node:crypto';
 import { findById, findByTelegramId, setLang, setTelegram } from '@/lib/auth/users';
+import { parseBotUsername } from './client';
 import { guessLang, isLang, LANG_LABEL, LANGS, STRINGS } from './i18n';
 import type { Lang } from './i18n';
 
@@ -77,9 +78,32 @@ async function call<T>(method: string, body: Record<string, unknown>, timeoutMs 
 }
 
 /** `NEXT_PUBLIC_TELEGRAM_BOT_USERNAME` without a leading "@" (null when unset or not a valid bot name). */
-export function configuredBotUsername(): string | null {
-  const name = process.env.NEXT_PUBLIC_TELEGRAM_BOT_USERNAME?.trim().replace(/^@/, '') ?? '';
-  return /^[A-Za-z]\w{4,31}$/.test(name) ? name : null;
+export const configuredBotUsername = (): string | null => parseBotUsername(process.env.NEXT_PUBLIC_TELEGRAM_BOT_USERNAME);
+
+/**
+ * Start-up check: the token works (getMe) and NEXT_PUBLIC_TELEGRAM_BOT_USERNAME names this bot.
+ * A mismatch would send every "Connect Telegram" link to another bot, so links then use the real
+ * name and it's logged as an error. False: the token was rejected (don't poll).
+ */
+async function verifyBot(): Promise<boolean> {
+  const raw = process.env.NEXT_PUBLIC_TELEGRAM_BOT_USERNAME?.trim();
+  const configured = configuredBotUsername();
+  if (raw && !configured) console.error(`[telegram] NEXT_PUBLIC_TELEGRAM_BOT_USERNAME "${raw}" isn't a valid bot username — ignored`);
+  let me: { username: string };
+  try {
+    me = await call<{ username: string }>('getMe', {});
+  } catch (e) {
+    const err = e as TelegramError;
+    if (err.status === 401 || err.status === 404) { console.error('[telegram] TELEGRAM_BOT_TOKEN was rejected by Telegram — bot not started'); return false; }
+    console.error(`[telegram] getMe failed (${err.message}) — will keep trying`);
+    return true;
+  }
+  if (configured && configured.toLowerCase() !== me.username.toLowerCase()) {
+    console.error(`[telegram] NEXT_PUBLIC_TELEGRAM_BOT_USERNAME is @${configured}, but TELEGRAM_BOT_TOKEN belongs to @${me.username} — links use @${me.username}; fix the variable and rebuild`);
+  }
+  st.username = me.username;
+  console.log(`[telegram] bot @${me.username} connected (long polling)`);
+  return true;
 }
 
 /** The bot's @username: from the env, else asked once with getMe. */
@@ -258,7 +282,7 @@ export function startTelegramBot(): void {
   if (!telegramConfigured() || st.polling) return;
   st.polling = true;
   void (async () => {
-    await botUsername();
+    if (!(await verifyBot())) { st.polling = false; return; }
     await registerCommands();
     let backoff = 1_000;
     while (!st.stopped) {
@@ -280,5 +304,5 @@ export function startTelegramBot(): void {
       }
     }
   })();
-  console.log('[telegram] bot polling started');
+  console.log('[telegram] bot starting…');
 }
