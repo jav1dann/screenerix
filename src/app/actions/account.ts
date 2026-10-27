@@ -2,6 +2,7 @@
 
 /**
  * Account settings: email & password, linked accounts (Google, Telegram), plan summary.
+ * Telegram links are issued by POST /api/telegram/link-token.
  * Sensitive changes ask for the current password; failures are throttled per account.
  */
 import { accessOf } from '@/lib/auth/access';
@@ -13,7 +14,7 @@ import { findByEmail, findById, hashPassword, normEmail, setTelegram, updateUser
 import { ordersOf, toOrderView } from '@/lib/billing/orders';
 import type { OrderView } from '@/lib/billing/orders';
 import { isEmail } from '@/lib/format';
-import { startLink, telegramConfigured } from '@/lib/telegram/bot';
+import { telegramConfigured } from '@/lib/telegram/bot';
 
 export interface AccountView {
   name: string;
@@ -122,14 +123,6 @@ export async function unlinkGoogle(): Promise<AccountResult> {
   if (!u.passHash) return { ok: false, error: 'Set a password first, or you’d have no way to sign in.' };
   updateUser(u.id, { googleSub: undefined, picture: undefined });
   return ok(u.id, 'Google disconnected.');
-}
-
-/** A one-time t.me link that connects the Telegram bot to this account. */
-export async function connectTelegram(): Promise<{ ok: true; url: string } | { ok: false; error: string }> {
-  const u = await me();
-  if (!u) return SIGNED_OUT;
-  const r = await startLink(u.id);
-  return 'url' in r ? { ok: true, url: r.url } : { ok: false, error: r.error };
 }
 
 export async function disconnectTelegram(): Promise<AccountResult> {

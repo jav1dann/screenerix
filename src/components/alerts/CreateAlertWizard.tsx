@@ -9,7 +9,6 @@
 import { Bell, Check, ChevronLeft, MessageCircle, Monitor, Plus, Search, Smartphone, Trash2, Volume2, X } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore, useTransition } from 'react';
 import type { ReactNode } from 'react';
-import { connectTelegram } from '@/app/actions/account';
 import { saveAlert } from '@/app/actions/alerts';
 import { BTN_RESET, GHOST_BTN, ICON_BTN, INPUT, PRIMARY_BTN } from '@/components/chart/styles';
 import { ExchangeIcon, ExchangeLabel } from '@/components/shared/brand/BrandIcon';
@@ -28,6 +27,7 @@ import { rankBy } from '@/lib/market/searchRank';
 import { getDirectory } from '@/lib/market/venueDirectory';
 import type { DirectoryEntry } from '@/lib/market/venueDirectory';
 import { enablePush } from '@/lib/push/client';
+import { openTelegramLink } from '@/lib/telegram/client';
 
 const STEPS = ['Alert type', 'Exchange & notifications', 'Coin & trigger'] as const;
 const MARKETS: ReadonlyArray<{ id: MarketType; label: string }> = [{ id: 'futures', label: 'Futures' }, { id: 'spot', label: 'Spot' }];
@@ -154,13 +154,15 @@ export default function CreateAlertWizard({ init }: { init: WizardInit }) {
     });
   };
 
-  const onTelegramConnect = () => start(async () => {
-    const r = await connectTelegram().catch(() => ({ ok: false as const, error: 'Couldn’t reach the server. Try again.' }));
-    if (!r.ok) { setError(r.error); return; }
-    window.open(r.url, '_blank', 'noopener');
-    setTgWaiting(true);
-    setNotice('Press Start in Telegram — this updates by itself.');
-  });
+  const onTelegramConnect = () => {
+    const opening = openTelegramLink(); // in the click itself: see openTelegramLink
+    start(async () => {
+      const err = await opening;
+      if (err) { setError(err); return; }
+      setTgWaiting(true);
+      setNotice('Press Start in Telegram — this updates by itself.');
+    });
+  };
 
   const onPush = (on: boolean) => {
     if (!on) { setChannels((c) => ({ ...c, push: false })); return; }

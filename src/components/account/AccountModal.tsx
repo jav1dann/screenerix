@@ -9,7 +9,7 @@ import { useRouter } from 'next/navigation';
 import { useEffect, useEffectEvent, useState, useSyncExternalStore, useTransition } from 'react';
 import type { FormEvent, ReactNode } from 'react';
 import { createPortal } from 'react-dom';
-import { changeEmail, changePassword, connectTelegram, disconnectTelegram, getAccount, setPassword, unlinkGoogle } from '@/app/actions/account';
+import { changeEmail, changePassword, disconnectTelegram, getAccount, setPassword, unlinkGoogle } from '@/app/actions/account';
 import type { AccountResult, AccountView } from '@/app/actions/account';
 import { StatusPill } from '@/components/billing/PaymentStep';
 import TelegramIcon from '@/components/shared/brand/TelegramIcon';
@@ -19,6 +19,7 @@ import type { AccountSection } from '@/lib/account/accountUi';
 import { openBilling } from '@/lib/billing/billingUi';
 import { fmtDay, fmtUsdt } from '@/lib/billing/format';
 import { PERIODS } from '@/lib/billing/plans';
+import { openTelegramLink, TELEGRAM_BOT_USERNAME } from '@/lib/telegram/client';
 
 const SECTIONS: Array<{ id: AccountSection; label: string; icon: ReactNode }> = [
   { id: 'email', label: 'Email & password', icon: <KeyRound size={15} aria-hidden="true" /> },
@@ -209,16 +210,18 @@ function LinkedSection({ account, apply, setAccount, setFlash }: {
     return () => clearInterval(t);
   }, [waiting, linked, setAccount, setFlash]);
 
-  const onTelegram = () => start(async () => {
-    const r = await connectTelegram().catch(() => ({ ok: false as const, error: 'Couldn’t reach the server. Try again.' }));
-    if (!r.ok) { setFlash({ tone: 'error', text: r.error }); return; }
-    window.open(r.url, '_blank', 'noopener');
-    setWaiting(true);
-    setFlash(null);
-  });
+  const onTelegram = () => {
+    const opening = openTelegramLink(); // in the click itself: see openTelegramLink
+    start(async () => {
+      const error = await opening;
+      if (error) { setFlash({ tone: 'error', text: error }); return; }
+      setWaiting(true);
+      setFlash(null);
+    });
+  };
 
   return (
-    <Card title="Linked accounts" hint="Sign in with Google, and get alerts in Telegram." data="linked">
+    <Card title="Linked accounts" hint={`Sign in with Google, and get alerts in Telegram${TELEGRAM_BOT_USERNAME ? ` from @${TELEGRAM_BOT_USERNAME}` : ''}.`} data="linked">
       <div className="ac-link" data-linked="google" data-connected={account.google.linked}>
         <span className="ac-link-logo"><GoogleIcon size={22} /></span>
         <span className="ac-link-text">
@@ -236,12 +239,12 @@ function LinkedSection({ account, apply, setAccount, setFlash }: {
         <span className="ac-link-text">
           <span className="ac-link-name">Telegram</span>
           {linked ? (
-            <span className="bx-fine">
-              Connected{account.telegram.username ? <> · <span data-telegram-username>@{account.telegram.username}</span></> : null} · ID <code data-telegram-id>{account.telegram.id}</code>
+            <span className="bx-fine" data-telegram-status="connected">
+              Connected as {account.telegram.username ? <span data-telegram-username>@{account.telegram.username}</span> : account.telegram.name ?? 'Telegram user'} · ID <code data-telegram-id>{account.telegram.id}</code>
               {account.telegram.linkedAt ? ` · since ${fmtDay(account.telegram.linkedAt)}` : ''}
             </span>
           ) : (
-            <span className="bx-fine">{!account.telegram.configured ? 'Telegram isn’t configured on this server' : waiting ? 'Waiting for you to press Start in Telegram…' : 'Not connected · alerts can be sent to Telegram'}</span>
+            <span className="bx-fine" data-telegram-status={waiting ? 'waiting' : 'not-connected'}>{!account.telegram.configured ? 'Telegram isn’t configured on this server' : waiting ? 'Waiting for you to press Start in Telegram…' : 'Not connected · alerts can be sent to Telegram'}</span>
           )}
         </span>
         {linked

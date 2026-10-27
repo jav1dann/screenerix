@@ -5,7 +5,8 @@
  *   Account screen → startLink(uid) → t.me/<bot>?start=<code> → user presses Start →
  *   the bot gets "/start <code>" → the account stores { id, username } → "Connected".
  *
- * `TELEGRAM_BOT_TOKEN` (from @BotFather) enables it; `TELEGRAM_API_BASE` points it elsewhere
+ * `TELEGRAM_BOT_TOKEN` (from @BotFather) enables it; `NEXT_PUBLIC_TELEGRAM_BOT_USERNAME` names the
+ * bot for links (else it's asked with getMe); `TELEGRAM_API_BASE` points it elsewhere
  * (tests). One process should poll a token at a time: a second poller gets 409 and pauses.
  * State lives on globalThis (server actions and the poller can sit in different bundles).
  * Server-only.
@@ -52,8 +53,15 @@ async function call<T>(method: string, body: Record<string, unknown>, timeoutMs 
   return data.result as T;
 }
 
-/** The bot's @username (asked once). */
+/** `NEXT_PUBLIC_TELEGRAM_BOT_USERNAME` without a leading "@" (null when unset or not a valid bot name). */
+export function configuredBotUsername(): string | null {
+  const name = process.env.NEXT_PUBLIC_TELEGRAM_BOT_USERNAME?.trim().replace(/^@/, '') ?? '';
+  return /^[A-Za-z]\w{4,31}$/.test(name) ? name : null;
+}
+
+/** The bot's @username: from the env, else asked once with getMe. */
 export async function botUsername(): Promise<string | null> {
+  st.username ??= configuredBotUsername();
   if (st.username || !telegramConfigured()) return st.username;
   try {
     st.username = (await call<{ username: string }>('getMe', {})).username;
@@ -63,8 +71,11 @@ export async function botUsername(): Promise<string | null> {
   return st.username;
 }
 
-/** A one-time deep link that connects the bot to account `uid` (10 minutes). */
-export async function startLink(uid: string): Promise<{ url: string } | { error: string }> {
+/**
+ * A one-time deep link that connects the bot to account `uid`: `t.me/<bot>?start=<token>`, where
+ * the token is 96 random bits, valid 10 minutes, and replaces the account's previous one.
+ */
+export async function startLink(uid: string): Promise<{ url: string; expiresAt: number } | { error: string }> {
   if (!telegramConfigured()) return { error: 'Telegram isn’t configured on this server.' };
   const name = await botUsername();
   if (!name) return { error: 'The Telegram bot is unreachable right now. Try again shortly.' };
@@ -72,7 +83,7 @@ export async function startLink(uid: string): Promise<{ url: string } | { error:
   for (const [c, v] of st.codes) if (v.exp < now || v.uid === uid) st.codes.delete(c);
   const code = randomBytes(12).toString('base64url');
   st.codes.set(code, { uid, exp: now + LINK_TTL_MS });
-  return { url: `https://t.me/${name}?start=${code}` };
+  return { url: `https://t.me/${name}?start=${code}`, expiresAt: now + LINK_TTL_MS };
 }
 
 /** Queue a message (HTML parse mode); resolves false when it couldn't be delivered. */
