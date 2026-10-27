@@ -30,6 +30,7 @@ npm run lint
 npm run typecheck    # next typegen + tsc: route types exist without a build
 npm run build          # with NEXT_PUBLIC_TELEGRAM_BOT_USERNAME set
 npm run test:alerts    # alert worker + Telegram bot + push, against local mocks (needs openssl)
+npm run test:strategies  # continuation-after-sweep rules + strength index, on synthetic candles
 npm audit --omit=dev
 ```
 

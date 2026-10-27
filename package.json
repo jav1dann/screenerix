@@ -8,7 +8,8 @@
     "start": "next start",
     "lint": "eslint",
     "test:alerts": "node scripts/test-alerts.mjs",
-    "typecheck": "next typegen && tsc --noEmit"
+    "typecheck": "next typegen && tsc --noEmit",
+    "test:strategies": "tsx --tsconfig tsconfig.json scripts/test-strategies.ts"
   },
   "dependencies": {
     "clsx": "^2.1.1",
