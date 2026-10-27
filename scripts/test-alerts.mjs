@@ -1,10 +1,11 @@
 #!/usr/bin/env node
 /**
- * `npm run test:alerts` — end-to-end test of the server-side alert pipeline (scripts/alerts-harness.ts).
+ * `npm run test:alerts` — end-to-end test of the server-side alert pipeline and the Telegram bot
+ * (scripts/alerts-harness.ts).
  *
  * Sets up an isolated world, then runs the harness with tsx (so `@/…` imports resolve):
  *   - a temporary data dir (never `.data/`), deleted afterwards
- *   - a mock Telegram Bot API (getMe / getUpdates / sendMessage) on a free local port
+ *   - a mock Telegram Bot API on a free local port (records calls, feeds updates, injects failures)
  *   - a throwaway self-signed TLS cert for the local push service (web-push only speaks HTTPS);
  *     trusted through NODE_EXTRA_CA_CERTS — TLS verification stays on
  *   - fresh VAPID keys and a dummy bot token: `.env.local` and real services are never used
@@ -21,21 +22,49 @@ import webpush from 'web-push';
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const dir = mkdtempSync(join(tmpdir(), 'sx-alerts-test-'));
 
-/** Mock Telegram Bot API; `GET /__sent` lists what the bot sent. */
+/**
+ * Mock Telegram Bot API. Records every call (`GET /__calls`), queues incoming updates
+ * (`POST /__update` with an Update body; getUpdates long-polls them) and fails sendMessage on
+ * purpose for some chats: 7001 → one 429 (retry_after 1), 7002 → 400 chat not found, 7003 → 403.
+ */
 function startMockTelegram() {
-  const sent = [];
-  const json = (res, body) => { res.writeHead(200, { 'content-type': 'application/json' }); res.end(JSON.stringify(body)); };
+  const calls = [];
+  const updates = [];
+  let waiters = [];
+  let nextId = 1;
+  const flooded = new Set();
+  const json = (res, body, status = 200) => { res.writeHead(status, { 'content-type': 'application/json' }); res.end(JSON.stringify(body)); };
   const server = http.createServer((req, res) => {
     const url = new URL(req.url, 'http://localhost');
-    if (url.pathname === '/__sent') return json(res, sent);
-    let body = '';
-    req.on('data', (c) => (body += c));
+    let raw = '';
+    req.on('data', (c) => (raw += c));
     req.on('end', () => {
+      const body = raw ? JSON.parse(raw) : {};
+      if (url.pathname === '/__calls') return json(res, calls);
+      if (url.pathname === '/__update') {
+        updates.push({ update_id: nextId++, ...body });
+        waiters.forEach((w) => w());
+        waiters = [];
+        return json(res, { ok: true });
+      }
       const method = url.pathname.split('/').pop();
+      if (method === 'getUpdates') {
+        const ready = () => updates.filter((u) => u.update_id >= (body.offset ?? 0));
+        if (ready().length) return json(res, { ok: true, result: ready() });
+        const done = () => { clearTimeout(timer); waiters = waiters.filter((w) => w !== done); json(res, { ok: true, result: ready() }); };
+        const timer = setTimeout(done, 1_000);
+        waiters.push(done);
+        return;
+      }
+      calls.push({ method, ...body });
       if (method === 'getMe') return json(res, { ok: true, result: { id: 1, is_bot: true, username: 'sx_test_bot' } });
-      if (method === 'sendMessage') { sent.push(JSON.parse(body || '{}')); return json(res, { ok: true, result: { message_id: sent.length } }); }
-      if (method === 'getUpdates') return setTimeout(() => json(res, { ok: true, result: [] }), 1_000);
-      json(res, { ok: false, description: 'unknown method' });
+      if (method === 'sendMessage') {
+        if (body.chat_id === 7001 && !flooded.has(body.text)) { flooded.add(body.text); return json(res, { ok: false, error_code: 429, description: 'Too Many Requests: retry after 1', parameters: { retry_after: 1 } }, 429); }
+        if (body.chat_id === 7002) return json(res, { ok: false, error_code: 400, description: 'Bad Request: chat not found' }, 400);
+        if (body.chat_id === 7003) return json(res, { ok: false, error_code: 403, description: 'Forbidden: bot was blocked by the user' }, 403);
+        return json(res, { ok: true, result: { message_id: calls.length } });
+      }
+      json(res, { ok: true, result: true });
     });
   });
   return new Promise((resolve) => server.listen(0, '127.0.0.1', () => resolve(server)));
