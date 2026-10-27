@@ -1,3 +1,14 @@
+# Screenerix
+
+Real-time crypto screener and trading terminal (Next.js 16).
+
+- **Configure:** copy [`.env.example`](.env.example) to `.env.local` and fill it in.
+- **Develop:** `npm run dev` · **Check:** `npm run lint`, `npm run typecheck`, `npm run build`
+- **Test alerts & the Telegram bot:** `npm run test:alerts` (local mocks; needs `openssl`)
+- **Deploy:** [docs/PRODUCTION.md](docs/PRODUCTION.md) — environment, checks, and a live Telegram alert walkthrough.
+
+---
+
 This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
 
 ## Getting Started
