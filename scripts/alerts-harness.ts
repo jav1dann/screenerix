@@ -227,6 +227,9 @@ async function main(): Promise<void> {
   check('Push: VAPID-signed and the encrypted payload decrypts', pushOf('/push/device-1')?.vapid === true && pushOf('/push/device-1')?.payload.title === 'BTC · Binance Futures' && pushOf('/push/device-1')?.payload.tag === `alert-${once.id}`);
   check('Push: in the account’s language too', pushOf('/push/amina')?.payload.title === 'BTC · Binance Фьючерсы' && pushOf('/push/amina')?.payload.body === 'Цена выросла до 100,500.00 (уровень: 100,000.00)', JSON.stringify(pushOf('/push/amina')?.payload));
   const subs = (JSON.parse(readFileSync(`${process.env.SX_DATA_DIR}/push-subscriptions.json`, 'utf8')) as { subs: Array<{ endpoint: string }> }).subs;
+  const deliveryOf = (uid: string, alertId: string) => eventsOf(uid).find((e) => e.alertId === alertId)?.delivery;
+  check('History: delivery recorded per channel (Telegram sent, push 1 device)', await waitFor(() => JSON.stringify(deliveryOf(user.id, once.id)) === '{"telegram":"sent","push":1}'), JSON.stringify(deliveryOf(user.id, once.id)));
+  check('History: only chosen channels are recorded (push off → no push entry)', deliveryOf(user.id, complex.id)?.telegram === 'sent' && deliveryOf(user.id, complex.id)?.push === undefined);
   check('Push: a subscription answering 410 is dropped', !subs.some((s) => s.endpoint.endsWith('/push/gone')) && subs.some((s) => s.endpoint.endsWith('/push/device-1')));
 
   section('Telegram errors');
@@ -236,6 +239,8 @@ async function main(): Promise<void> {
     priceAlert(u.id, 'BTC', 1);
     return u.id;
   };
+  const unlinked = await createUser({ email: 'unlinked@test.local', name: 'Unlinked', password: 'error-pass-1' });
+  const unlinkedAlert = priceAlert(unlinked.id, 'BTC', 1); // Telegram chosen, no chat linked
   const flooded = await make('flood@test.local', 7001);
   const gone = await make('gone@test.local', 7002);
   const blocked = await make('blocked@test.local', 7003);
@@ -243,6 +248,8 @@ async function main(): Promise<void> {
   check('429 flood control: retried after retry_after, then delivered', await waitFor(async () => (await sentTo(7001)).length === 2) && !!findById(flooded)?.telegram);
   check('400 chat not found: the dead link is removed', await waitFor(() => !findById(gone)?.telegram));
   check('403 bot blocked: the dead link is removed', await waitFor(() => !findById(blocked)?.telegram));
+  check('History: dead chat recorded as Telegram failed', await waitFor(() => eventsOf(gone)[0]?.delivery?.telegram === 'failed'));
+  check('History: Telegram chosen but not linked → "unlinked"', await waitFor(() => eventsOf(unlinked.id).find((e) => e.alertId === unlinkedAlert.id)?.delivery?.telegram === 'unlinked'));
   check('a failing chat doesn’t stop the others', (await sentTo(9001)).length === 4 && eventsOf(gone).length === 1);
 
   worker.stop();
