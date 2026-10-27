@@ -8,7 +8,7 @@ import { Bell, BellRing, MessageCircle, Monitor, Pencil, Plus, RotateCcw, Smartp
 import { useEffect, useMemo, useState, useSyncExternalStore, useTransition } from 'react';
 import type { ReactNode } from 'react';
 import { archiveAlert, deleteAlert, restoreAlert } from '@/app/actions/alerts';
-import { BTN_BASE, BTN_RESET, GHOST_BTN, ICON_BTN, PRIMARY_BTN } from '@/components/chart/styles';
+import { BTN_RESET, GHOST_BTN, ICON_BTN, PRIMARY_BTN } from '@/components/chart/styles';
 import { ExchangeIcon } from '@/components/shared/brand/BrandIcon';
 import TelegramIcon from '@/components/shared/brand/TelegramIcon';
 import Modal from '@/components/strategies/Modal';
@@ -58,7 +58,7 @@ function PauseSwitch({ a, busy, onToggle }: { a: AlertView; busy: boolean; onTog
   const on = a.status === 'active';
   return (
     <button type="button" role="switch" aria-checked={on} aria-label={`${a.symbol} alert ${on ? 'active — pause it' : 'paused — resume it'}`} title={on ? 'Pause' : 'Resume'} disabled={busy} onClick={onToggle} data-alert-toggle
-      className={`${BTN_BASE} flex h-4 w-7 shrink-0 rounded-full p-0.5 transition-colors disabled:opacity-40 ${on ? 'justify-end bg-sx-up' : 'justify-start bg-sx-line2'}`}>
+      className={`${BTN_RESET} flex h-4 w-7 shrink-0 rounded-full p-0.5 transition-colors disabled:opacity-40 ${on ? 'justify-end bg-sx-up' : 'justify-start bg-sx-line2'}`}>
       <span className="h-3 w-3 rounded-full bg-white" aria-hidden="true" />
     </button>
   );

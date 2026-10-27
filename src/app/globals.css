@@ -21,6 +21,16 @@
   color-scheme: dark;
 }
 
+/*
+ * Background / colour reset of BTN_RESET (src/components/chart/styles.ts). It lives in the
+ * components layer so any bg-* / text-* utility on the same element wins: as utilities,
+ * bg-transparent / text-inherit overrode every colour that happened to compile before them
+ * (switch tracks, modal backdrops, sticky headers…).
+ */
+@layer components {
+  .sx-btn-reset { background-color: transparent; color: inherit; }
+}
+
 /* Screenerix tokens as Tailwind colours: bg-sx-panel, text-sx-muted, border-sx-line, … */
 @theme inline {
   --color-background: var(--sx-bg);
