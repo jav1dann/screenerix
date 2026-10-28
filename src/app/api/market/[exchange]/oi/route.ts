@@ -1,6 +1,6 @@
 import type { NextRequest } from 'next/server';
 import { isExchangeId, TIMEFRAME_MS } from '@/lib/market/exchanges';
-import { getOiCurrent, getOiHistory, isBaseSymbol, oiPeriod, UpstreamError } from '@/lib/market/server/marketData';
+import { getOiCurrent, getOiHistory, isBaseSymbol, oiPeriod, upstreamErrorResponse } from '@/lib/market/server/marketData';
 
 /**
  * GET /api/market/:exchange/oi?symbol=BTC&tf=1m&limit=200 → { period, points } (base units, oldest first)
@@ -22,7 +22,6 @@ export async function GET(req: NextRequest, ctx: RouteContext<'/api/market/[exch
     const period = oiPeriod(exchange, tf);
     return Response.json({ period, points: period ? await getOiHistory(exchange, symbol, period, limit) : [] });
   } catch (e) {
-    const status = e instanceof UpstreamError ? e.status : 502;
-    return Response.json({ error: e instanceof Error ? e.message : 'Upstream error' }, { status });
+    return upstreamErrorResponse(e);
   }
 }

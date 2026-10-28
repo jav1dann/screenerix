@@ -241,9 +241,18 @@ export default function Terminal({ user, onExit, defaultSidebarOpen = true }: Te
   };
 
 
+  // The primary venue's market list failed: say so (it keeps retrying by itself, with backoff) and offer Retry.
+  const feedDown = status[primary].state === 'error'
+    ? { text: `${venue.name} is unavailable — ${status[primary].error ?? 'connection failed'}. Retrying automatically…`, onRetry: () => feed.retry(primary) }
+    : null;
   const waiting = (
     <div className="sx-glass sx-skeleton" style={{ height: 240 }}>
-      {status[primary].state === 'error' ? `${venue.name} is unavailable — ${status[primary].error ?? 'connection failed'}` : `Waiting for ${venueLabel} data…`}
+      {feedDown ? (
+        <span style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10 }} role="alert" data-feed-error>
+          {feedDown.text}
+          <button type="button" className="sx-btn" onClick={feedDown.onRetry} data-feed-retry>Retry now</button>
+        </span>
+      ) : `Waiting for ${venueLabel} data…`}
     </div>
   );
 
@@ -286,7 +295,7 @@ export default function Terminal({ user, onExit, defaultSidebarOpen = true }: Te
               metrics={metricsBySymbol}
               tf={cardTf}
               grid={grid}
-             
+              unavailable={feedDown}
               scan={scan}
               dir={mapRanking.sort.dir}
               screen={activeFilter && {

@@ -1,6 +1,6 @@
 import type { NextRequest } from 'next/server';
 import { isExchangeId } from '@/lib/market/exchanges';
-import { getInstrument, getInstruments, isBaseSymbol, UpstreamError } from '@/lib/market/server/marketData';
+import { getInstrument, getInstruments, isBaseSymbol, upstreamErrorResponse } from '@/lib/market/server/marketData';
 
 /**
  * GET /api/market/:exchange/instruments            → { instruments } for the tracked universe
@@ -15,7 +15,6 @@ export async function GET(req: NextRequest, ctx: RouteContext<'/api/market/[exch
     if (symbol) return Response.json({ instrument: await getInstrument(exchange, symbol) });
     return Response.json({ instruments: await getInstruments(exchange) });
   } catch (e) {
-    const status = e instanceof UpstreamError ? e.status : 502;
-    return Response.json({ error: e instanceof Error ? e.message : 'Upstream error' }, { status });
+    return upstreamErrorResponse(e);
   }
 }

@@ -12,6 +12,17 @@ export class UpstreamError extends Error {
   constructor(message: string, readonly status = 502) { super(message); }
 }
 
+/**
+ * An API route's answer for a failed upstream call. Errors re-thrown from a `'use cache'`
+ * function reach the route as Next's generic production error (neither an UpstreamError nor a
+ * readable message), so anything that isn't our own UpstreamError gets a plain message.
+ */
+export function upstreamErrorResponse(e: unknown): Response {
+  return e instanceof UpstreamError
+    ? Response.json({ error: e.message }, { status: e.status })
+    : Response.json({ error: 'The exchange didn’t respond' }, { status: 502 });
+}
+
 /** Base symbols are tickers like "BTC" or "1000SATS" — some venues also list non-Latin names (e.g. Binance "龙虾"). */
 export const isBaseSymbol = (s: string): boolean => /^[\p{Lu}\p{Lo}\p{N}]{1,20}$/u.test(s);
 

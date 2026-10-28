@@ -36,6 +36,8 @@ interface MarketMapProps {
   dir: 'desc' | 'asc';
   /** Enabled screener filter (chip + paused notice). */
   screen?: MapScreen | null;
+  /** The exchange's market feed failed (shown instead of "waiting", with Retry; it also retries by itself). */
+  unavailable?: { text: string; onRetry: () => void } | null;
 }
 
 export interface MapScreen {
@@ -79,7 +81,7 @@ function LazyCell({ children }: { children: ReactNode }) {
   );
 }
 
-export default function MarketMap({ market, exchange, sort, metrics, tf, grid, scan, dir, screen }: MarketMapProps) {
+export default function MarketMap({ market, exchange, sort, metrics, tf, grid, scan, dir, screen, unavailable }: MarketMapProps) {
   const layout = gridLayout(grid);
   const filtering = Boolean(screen && !screen.mismatch);
   const bySymbol = new Map(market.map((a) => [a.symbol, a]));
@@ -125,7 +127,12 @@ export default function MarketMap({ market, exchange, sort, metrics, tf, grid, s
       </div>
       {tiles.length === 0 && (
         <div className="sx-glass sx-skeleton" style={{ height: 160 }}>
-          {!filtering || !screen ? 'Waiting for market data…'
+          {unavailable ? (
+            <span style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10 }} role="alert" data-feed-error>
+              {unavailable.text}
+              <button type="button" className="sx-btn" onClick={unavailable.onRetry} data-feed-retry>Retry now</button>
+            </span>
+          ) : !filtering || !screen ? 'Waiting for market data…'
             : screen.scan.scanned < screen.scan.candidates ? `Scanning ${screen.name}… ${screen.scan.scanned} / ${screen.scan.candidates} coins checked`
             : `No coins match “${screen.name}” right now.`}
         </div>

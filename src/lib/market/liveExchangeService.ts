@@ -35,6 +35,8 @@ const MINUTE = 60_000;
 const HISTORY_TOP = 60; // symbols seeded with 1m history (others build theirs from live ticks)
 const BOOK_TOP = 30; // primary-venue symbols with a streamed order book (plus the focused one)
 const RERANK_MS = 5 * 60_000; // how often the volume ranking (Market Map order) is refreshed
+const INST_RETRY_MS = 2_000; // market list failed: first automatic retry, doubling…
+const INST_RETRY_MAX_MS = 60_000; // …up to once a minute (Retry in the UI goes at once)
 
 const minuteOf = (t: number) => Math.floor(t / MINUTE) * MINUTE;
 
@@ -50,6 +52,12 @@ interface Venue {
   adapter: ExchangeAdapter;
   instStatus: 'idle' | 'loading' | 'ready' | 'error';
   instError?: string;
+  /** Failed market-list loads in a row (automatic retry backoff) and the pending retry. */
+  instFailures: number;
+  instRetry?: ReturnType<typeof setTimeout>;
+  /** Same for the price / volume snapshot (live tickers may never come, e.g. sockets blocked). */
+  snapFailures: number;
+  snapRetry?: ReturnType<typeof setTimeout>;
   instruments: Record<string, InstrumentMeta>;
   byInst: Map<string, string>;
   quotes: Map<string, Quote>;
@@ -104,7 +112,7 @@ export function createLiveFeed(): MarketFeed {
     if (hit) return hit;
     const adapter = ADAPTERS[id];
     const v: Venue = {
-      id, adapter, instStatus: 'idle', instruments: {}, byInst: new Map(),
+      id, adapter, instStatus: 'idle', instFailures: 0, snapFailures: 0, instruments: {}, byInst: new Map(),
       quotes: new Map(), books: new Map(), history: new Map(), candles: new Map(),
       sockets: [], alertedMinute: new Map(), rank: [], ranked: false,
     };
@@ -135,7 +143,18 @@ export function createLiveFeed(): MarketFeed {
   async function loadSnapshot(v: Venue): Promise<void> {
     try {
       handleEvents(v, await fetchTickers(v.id));
-    } catch { /* live tickers will fill in */ }
+      // Recovered after failures: the 1m history was tried against the dead venue too — reload it.
+      if (v.snapFailures && historyFor === v.id) historyFor = '';
+      v.snapFailures = 0;
+    } catch {
+      // Live tickers may fill in; if they don't (venue down, sockets blocked) the snapshot retries.
+      clearTimeout(v.snapRetry);
+      const wait = Math.min(INST_RETRY_MAX_MS, INST_RETRY_MS * 2 ** v.snapFailures++);
+      v.snapRetry = setTimeout(() => {
+        v.snapRetry = undefined;
+        if (activeIds().has(v.id) && v.instStatus === 'ready') void loadSnapshot(v);
+      }, wait);
+    }
     rerank(v);
     v.ranked = true;
     apply();
@@ -153,12 +172,30 @@ export function createLiveFeed(): MarketFeed {
       v.rank = Object.keys(instruments);
       v.instStatus = Object.keys(instruments).length ? 'ready' : 'error';
       if (v.instStatus === 'error') v.instError = 'No active symbols listed';
-      else void loadSnapshot(v);
+      else { v.instFailures = 0; void loadSnapshot(v); }
     } catch (e) {
       v.instStatus = 'error';
       v.instError = `Market list unavailable: ${e instanceof Error ? e.message : String(e)}`;
     }
+    if (v.instStatus === 'error') scheduleInstRetry(v);
     apply();
+  }
+
+  /**
+   * After a failed market-list load: stay in `error` (shown with a Retry button) and try again
+   * later, backing off. Never straight away — `apply` runs on every change and would otherwise
+   * re-request the list in a tight loop while the venue is down.
+   */
+  function scheduleInstRetry(v: Venue): void {
+    clearTimeout(v.instRetry);
+    const wait = Math.min(INST_RETRY_MAX_MS, INST_RETRY_MS * 2 ** v.instFailures);
+    v.instFailures++;
+    v.instRetry = setTimeout(() => {
+      v.instRetry = undefined;
+      if (v.instStatus !== 'error') return;
+      v.instStatus = 'idle';
+      apply();
+    }, wait);
   }
 
   async function loadHistory(v: Venue): Promise<void> {
@@ -166,7 +203,7 @@ export function createLiveFeed(): MarketFeed {
     const focus = focusOf(v);
     const symbols = [...new Set([...(focus ? [focus] : []), ...v.rank.slice(0, HISTORY_TOP)])];
     await pool(symbols, FETCH_CONCURRENCY, async (symbol) => {
-      const candles = await fetchKlines(v.id, symbol, '1m', HISTORY_LEN);
+      const candles = await fetchKlines(v.id, symbol, '1m', HISTORY_LEN).catch(() => []); // builds from live ticks instead
       if (gen !== historyGen || !candles.length) return;
       const closes = candles.map((c) => c.c);
       let minute = candles[candles.length - 1].t;
@@ -208,12 +245,16 @@ export function createLiveFeed(): MarketFeed {
         const v = venues.get(id);
         if (v) {
           v.sockets.forEach((s) => s.setTopics(new Set()));
+          // Not shown any more: drop a pending market-list retry (it reloads when shown again).
+          if (v.instRetry) { clearTimeout(v.instRetry); v.instRetry = undefined; v.instFailures = 0; if (v.instStatus === 'error') v.instStatus = 'idle'; }
+          clearTimeout(v.snapRetry); v.snapRetry = undefined; v.snapFailures = 0;
           v.quotes.clear(); v.books.clear(); v.history.clear(); v.candles.clear();
         }
         continue;
       }
       const v = venue(id);
-      if (v.instStatus !== 'ready') { void loadInstruments(v); continue; }
+      // Only from idle: loading is in flight, a failed load waits for its retry (or Retry).
+      if (v.instStatus !== 'ready') { if (v.instStatus === 'idle') void loadInstruments(v); continue; }
 
       const isPrimary = id === config?.primary;
       const focus = focusOf(v);
@@ -381,7 +422,7 @@ export function createLiveFeed(): MarketFeed {
     retry(id) {
       const v = venues.get(id);
       if (!v) return;
-      if (v.instStatus === 'error') v.instStatus = 'idle';
+      if (v.instStatus === 'error') { clearTimeout(v.instRetry); v.instRetry = undefined; v.instFailures = 0; v.instStatus = 'idle'; }
       if (id === config?.primary) { historyFor = ''; candlesFor = ''; }
       v.sockets.forEach((s) => s.retry());
       apply();
