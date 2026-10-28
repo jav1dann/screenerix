@@ -36,6 +36,7 @@ import MeasureOverlay from '../MeasureOverlay';
 import DrawingLayer from './DrawingLayer';
 import type { DrawingLayerControls, DrawingPatch } from './DrawingLayer';
 import type { Tool } from './tools';
+import { setDataKeepingView } from '../keepView';
 
 export interface AdvancedChartControls {
   /** Download a PNG of all panes plus drawings. */
@@ -153,8 +154,8 @@ export default function AdvancedChart(props: AdvancedChartProps) {
   useEffect(() => { layerCtx.current = { exchange: win.exchange, market: win.market, symbol: win.symbol, tf: stream.key.tf }; });
 
   // Latest callbacks for long-lived chart subscriptions.
-  const cb = useRef({ onHover: props.onHover, onSelect: props.onSelect, tool });
-  useEffect(() => { cb.current = { onHover: props.onHover, onSelect: props.onSelect, tool }; });
+  const cb = useRef({ onHover: props.onHover, onSelect: props.onSelect, onAlertPick: props.onAlertPick, selectedId: props.selectedId, tool });
+  useEffect(() => { cb.current = { onHover: props.onHover, onSelect: props.onSelect, onAlertPick: props.onAlertPick, selectedId: props.selectedId, tool }; });
 
   /* ── Create the chart (callback ref: re-created when stream / symbol change) ── */
   const hostRef = useCallback((host: HTMLDivElement | null) => {
@@ -238,7 +239,9 @@ export default function AdvancedChart(props: AdvancedChartProps) {
       layer.setBars(stream.getCandles(), false);
     };
     const setAll = (data: RawCandle[]) => {
-      candles.setData(data.map(toBar));
+      // Keeps the user's zoom / scroll when older history is prepended or the series is re-seeded.
+      const bars = data.map(toBar);
+      setDataKeepingView(chart, candles, bars.map((b) => b.time as number), () => candles.setData(bars));
       const last = data[data.length - 1];
       if (last) candles.applyOptions({ priceFormat: { type: 'custom', formatter: fmtPrice, minMove: minMoveFor(last.c) } });
       layer.setBars(data, true);
@@ -246,17 +249,8 @@ export default function AdvancedChart(props: AdvancedChartProps) {
     };
     setAll(stream.getCandles());
     chart.timeScale().scrollToRealTime(); // new timeframe / symbol: jump to the live edge
-    let firstT = stream.getCandles()[0]?.t;
     const offData = stream.onData((e) => {
-      if (e.type === 'reset') {
-        // Older history was prepended: keep the same time window in view.
-        const prepended = firstT !== undefined && e.candles[0] !== undefined && e.candles[0].t < firstT;
-        const range = prepended ? chart.timeScale().getVisibleRange() : null;
-        firstT = e.candles[0]?.t;
-        setAll(e.candles);
-        if (range) chart.timeScale().setVisibleRange(range);
-        return;
-      }
+      if (e.type === 'reset') { setAll(e.candles); return; }
       try { candles.update(toBar(e.candle)); } catch { setAll(stream.getCandles()); return; }
       anchorLevels(stream.getCandles());
       dirty = true;
@@ -271,7 +265,17 @@ export default function AdvancedChart(props: AdvancedChartProps) {
       for (let i = bars.length - 1; i >= 0; i--) { if (bars[i].t === ms) { bar = bars[i]; break; } if (bars[i].t < ms) break; }
       cb.current.onHover(bar);
     };
-    const onClick = () => { if (cb.current.tool === 'cross' || cb.current.tool === 'dot' || cb.current.tool === 'pointer') cb.current.onSelect(null); };
+    // Cursor tools: a click deselects the selected drawing; with nothing selected it places a draft
+    // price alert at the clicked price (like the chart cards — Save on the line makes it real).
+    const onClick = (param: MouseEventParams<Time>) => {
+      const c = cb.current;
+      if (c.tool !== 'cross' && c.tool !== 'dot' && c.tool !== 'pointer') return;
+      if (c.selectedId) { c.onSelect(null); return; }
+      // Alerts are placed on the price pane only (sub-pane y maps to another scale).
+      if (!param.point || (param.paneIndex ?? 0) !== 0) return;
+      const price = candles.coordinateToPrice(param.point.y);
+      if (price !== null && price > 0) c.onAlertPick(price);
+    };
     // Scrolled to the left edge: page in older history.
     const onRange = (r: { from: number; to: number } | null) => {
       if (r && r.from < OLDER_EDGE_BARS) void stream.loadOlder();
@@ -292,6 +296,7 @@ export default function AdvancedChart(props: AdvancedChartProps) {
       const next = `${r?.from},${r?.to},${candles.priceToCoordinate(last)},${candles.priceToCoordinate(last * 1.01)},${h},${w},${stream.getCandles().length}`;
       if (next !== sig) {
         sig = next;
+        host.dataset.range = r ? `${r.from.toFixed(1)}:${r.to.toFixed(1)}/${stream.getCandles().length}` : ''; // test hook: visible bars / bars loaded
         setView((v) => v + 1);
         setPane((prev) => (prev.w === w && prev.h === h ? prev : { w, h }));
       }

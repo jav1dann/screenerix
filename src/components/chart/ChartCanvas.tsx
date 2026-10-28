@@ -27,6 +27,7 @@ import AlertLineOverlay from './AlertLineOverlay';
 import ChartWatermark from './ChartWatermark';
 import IndicatorLegend from './IndicatorLegend';
 import MeasureOverlay from './MeasureOverlay';
+import { setDataKeepingView } from './keepView';
 
 export interface AlertLine {
   id: string;
@@ -182,6 +183,8 @@ export default function ChartCanvas({
         raf = 0;
         const next: Record<string, number | null> = {};
         for (const l of linesRef.current) next[l.id] = candles.priceToCoordinate(l.price);
+        const r = chart.timeScale().getVisibleLogicalRange();
+        host.dataset.range = r ? `${r.from.toFixed(1)}:${r.to.toFixed(1)}/${stream.getCandles().length}` : ''; // test hook: visible bars / bars loaded
         setPaneH(chart.panes()[0]?.getHeight() ?? 0);
         setYs((prev) => {
           const keys = Object.keys(next);
@@ -192,7 +195,9 @@ export default function ChartCanvas({
     };
 
     const setAll = (data: RawCandle[]) => {
-      candles.setData(data.map(toBar));
+      // Keeps the user's zoom / scroll when bars are prepended or the series is re-seeded.
+      const bars = data.map(toBar);
+      setDataKeepingView(chart, candles, bars.map((b) => b.time as number), () => candles.setData(bars));
       ind.setBars(data, true);
       anchorLevels(data);
       const last = data[data.length - 1];

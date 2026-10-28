@@ -205,9 +205,14 @@ function createChartStream(key: ChartKey): ChartStream & { dispose(): void } {
     ]);
     if (g !== gen) return;
     const live = seeded ? candles.slice(-1) : pendingCandles.splice(0);
-    candles = main.candles;
-    subCursor = main.cursor;
-    historyStart = subMinute && !subCursor;
+    // A re-seed (after a reconnect) keeps the older history already paged in before the new page.
+    const first = main.candles[0]?.t;
+    const kept = seeded && first !== undefined ? candles.filter((c) => c.t < first) : [];
+    candles = [...kept, ...main.candles];
+    if (!kept.length) {
+      subCursor = main.cursor;
+      historyStart = subMinute && !subCursor;
+    }
     minute = oneMinute ?? candles;
     live.forEach((c) => applyCandle(candles, c, maxCandles));
     // Replay buffered trades that the REST seed didn't already include.

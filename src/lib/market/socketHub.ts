@@ -86,9 +86,11 @@ class SharedSocket {
     }
     this.ws = ws;
     this.active.clear();
+    let opened = false;
 
     ws.onopen = () => {
       if (ws !== this.ws) return;
+      opened = true;
       this.attempts = 0;
       this.lastMessage = Date.now();
       this.setState('live');
@@ -109,7 +111,9 @@ class SharedSocket {
     ws.onclose = (e: CloseEvent) => {
       if (ws !== this.ws) return;
       this.drop();
-      this.channels.forEach((c) => c.handlers.onReset?.());
+      // Only a socket that was open can have left a gap: a failed attempt changes nothing, and
+      // resetting on each one made every chart re-download its history at every reconnect try.
+      if (opened) this.channels.forEach((c) => c.handlers.onReset?.());
       if (!this.desired.size) { this.setState('idle'); return; }
       this.error = e.reason || `Disconnected (code ${e.code})`;
       this.scheduleReconnect();
