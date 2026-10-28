@@ -20,14 +20,14 @@ import { useChartStream } from '@/hooks/useChartStream';
 import { useChartPrefs, useDrawings } from '@/hooks/useTerminal';
 import { openIndicators } from '@/lib/indicators/ui';
 import type { MarketType } from '@/lib/alerts/alertStore';
-import { alertsUi, openAlertWizard } from '@/lib/alerts/alertsUi';
+import { alertsUi } from '@/lib/alerts/alertsUi';
 import { removeAllDrawings, removeDrawing, upsertDrawing } from '@/lib/drawings/drawingStore';
 import { DEFAULT_COLOR } from '@/lib/drawings/types';
 import type { DrawPoint, DrawingKind } from '@/lib/drawings/types';
 import { fmtDateTime } from '@/lib/format';
 import { ADAPTERS, TIMEFRAME_MS } from '@/lib/market/exchanges';
 import type { ChartTimeframe, ExchangeId, RawCandle } from '@/lib/market/exchanges';
-import { alertLines as linesFor, DRAFT_ID, deleteAlertLine, editAlertLine, tickerOf, venueMarket } from '../alertForm';
+import { alertLines as linesFor, DRAFT_ID, deleteAlertLine, editAlertLine, moveAlertLineTo, saveDraftLine, tickerOf, venueMarket } from '../alertForm';
 import type { AlertLine } from '../ChartCanvas';
 import { GHOST_BTN } from '../styles';
 import AdvancedChart from './AdvancedChart';
@@ -101,7 +101,12 @@ export default function ChartWorkspace({ symbol, exchange, marketType, initialIn
 
   /* ── Alerts (checked on the server; lines for the active price alerts, edited in the alert wizard) ── */
   const alertLines: AlertLine[] = linesFor(alerts, draft);
-  const pickAlert = (price: number) => openAlertWizard({ mode: 'create', kind: 'price', exchange, symbol, price });
+  // The alert tool places a line at the clicked price; Save (on the line) makes it a real alert,
+  // Edit opens the wizard for more options. Lines can be dragged.
+  const pickAlert = (price: number) => setDraft(price);
+  const lastPrice = () => stream.getCandles().at(-1)?.c ?? null;
+  const saveAlertLine = () => saveDraftLine(draft, exchange, symbol, lastPrice(), () => setDraft(null));
+  const moveAlert = (id: string, price: number) => moveAlertLineTo(id, price, lastPrice(), setDraft);
   const editAlert = (id: string) => { if (editAlertLine(id, draft, alerts, exchange, symbol) && id === DRAFT_ID) setDraft(null); };
   const deleteAlert = (id: string) => { if (id === DRAFT_ID) setDraft(null); else deleteAlertLine(id); };
 
@@ -289,6 +294,8 @@ export default function ChartWorkspace({ symbol, exchange, marketType, initialIn
               onAlertPick={pickAlert}
               onAlertEdit={editAlert}
               onAlertDelete={deleteAlert}
+              onAlertSave={saveAlertLine}
+              onAlertMove={moveAlert}
               onHover={setHover}
               controls={controls}
             />

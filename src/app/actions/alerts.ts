@@ -9,11 +9,14 @@
 import { headers } from 'next/headers';
 import { hasAccess } from '@/lib/auth/access';
 import { getCurrentUser } from '@/lib/auth/dal';
-import { activeCount, alertsOf, eventsOf, patchAlert, removeAlert, saveAlert as storeAlert } from '@/lib/alerts/server/store';
+import { activeCount, alertsOf, eventsOf, patchAlert, removeAlert, saveAlert as storeAlert, setAlertLevel } from '@/lib/alerts/server/store';
 import { MAX_ACTIVE_ALERTS, validateAlertInput } from '@/lib/alerts/types';
 import type { Alert, AlertEvent } from '@/lib/alerts/types';
 import { requireInstrument } from '@/lib/market/server/marketData';
 import { addSubscription, pushPublicKey, removeSubscription } from '@/lib/push/server';
+import { metricsKey, scanStore } from '@/lib/server/scan/store';
+import type { MetricsEntryData } from '@/lib/server/scan/marketWorker';
+import type { ExchangeId } from '@/lib/market/exchanges';
 import { telegramConfigured } from '@/lib/telegram/bot';
 import type { Lang } from '@/lib/telegram/i18n';
 import { findById } from '@/lib/auth/users';
@@ -53,13 +56,46 @@ export async function getAlertsState(): Promise<AlertsResult<AlertsState>> {
   };
 }
 
+/** How fresh the scan engine's price must be to decide an alert's side. */
+const LIVE_PRICE_MAX_AGE_MS = 60_000;
+
+/** The price the alert worker checks this coin against (the scan engine's latest), or null when unknown / stale. */
+function enginePrice(venue: ExchangeId, symbol: string): number | null {
+  const entry = scanStore().get<MetricsEntryData>(metricsKey(venue));
+  if (!entry || Date.now() - entry.updatedAt > LIVE_PRICE_MAX_AGE_MS) return null;
+  const p = entry.data.rows.find((r) => r.s === symbol)?.p;
+  return p !== undefined && p > 0 ? p : null;
+}
+
+/**
+ * The side a price alert is crossed from: from the engine's own price when it has one (so the
+ * alert can't start out already "crossed" because the browser's price lagged), else the hint.
+ */
+const sideOf = (venue: ExchangeId, symbol: string, level: number, hint: 'above' | 'below'): 'above' | 'below' => {
+  const live = enginePrice(venue, symbol);
+  return live === null ? hint : level < live ? 'below' : 'above';
+};
+
 export async function saveAlert(raw: unknown): Promise<AlertsResult<AlertView>> {
+  return save(raw, false);
+}
+
+/**
+ * A one-click alert from a chart: like saveAlert, but a price alert's side (rises to / falls to)
+ * is decided here from the engine's live price (the browser's `direction` is only the fallback).
+ */
+export async function saveQuickAlert(raw: unknown): Promise<AlertsResult<AlertView>> {
+  return save(raw, true);
+}
+
+async function save(raw: unknown, quick: boolean): Promise<AlertsResult<AlertView>> {
   const user = await getCurrentUser();
   if (!user) return SIGNED_OUT;
   if (!hasAccess(user, Date.now())) return { ok: false, error: 'Your plan has ended. Upgrade to Pro to create alerts.' };
   const v = validateAlertInput(raw);
   if (!v.ok) return v;
   const input = v.input;
+  if (quick && input.kind === 'price' && input.price) input.price = { ...input.price, direction: sideOf(input.exchange, input.symbol, input.price.level, input.price.direction) };
   const editing = input.id ? alertsOf(user.id).find((a) => a.id === input.id) : undefined;
   if (input.id && !editing) return { ok: false, error: 'That alert no longer exists.' };
   if (!editing || editing.status !== 'active') {
@@ -89,6 +125,20 @@ export async function restoreAlert(id: string): Promise<AlertsResult<AlertView>>
   if (!hasAccess(user, Date.now())) return { ok: false, error: 'Your plan has ended. Upgrade to Pro to resume alerts.' };
   if (activeCount(user.id) >= MAX_ACTIVE_ALERTS) return { ok: false, error: `You have ${MAX_ACTIVE_ALERTS} active alerts — pause or delete some first.` };
   const a = patchAlert(user.id, String(id), { status: 'active', lastTriggeredAt: null, updatedAt: Date.now() });
+  return a ? { ok: true, data: view(a) } : { ok: false, error: 'That alert no longer exists.' };
+}
+
+/** Move a price alert to `level` (its chart line was dragged); its side comes from the engine's live price (`direction`: fallback). */
+export async function moveAlertLevel(id: string, level: number, direction: 'above' | 'below'): Promise<AlertsResult<AlertView>> {
+  const user = await getCurrentUser();
+  if (!user) return SIGNED_OUT;
+  if (!hasAccess(user, Date.now())) return { ok: false, error: 'Your plan has ended. Upgrade to Pro to change alerts.' };
+  if (typeof level !== 'number' || !Number.isFinite(level) || level <= 0 || level > 1e12) return { ok: false, error: 'Invalid price.' };
+  if (direction !== 'above' && direction !== 'below') return { ok: false, error: 'Invalid direction.' };
+  const current = alertsOf(user.id).find((a) => a.id === String(id));
+  if (!current || current.kind !== 'price') return { ok: false, error: 'That alert no longer exists.' };
+  if (current.status !== 'active' && activeCount(user.id) >= MAX_ACTIVE_ALERTS) return { ok: false, error: `You have ${MAX_ACTIVE_ALERTS} active alerts — pause or delete some first.` };
+  const a = setAlertLevel(user.id, current.id, level, sideOf(current.exchange, current.symbol, level, direction));
   return a ? { ok: true, data: view(a) } : { ok: false, error: 'That alert no longer exists.' };
 }
 

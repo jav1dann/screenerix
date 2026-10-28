@@ -3,6 +3,7 @@ import { deleteAlert } from '@/app/actions/alerts';
 import type { MarketType } from '@/lib/alerts/alertStore';
 import { openAlertWizard } from '@/lib/alerts/alertsUi';
 import { removeLocal } from '@/lib/alerts/client';
+import { moveAlertLine, saveQuickPriceAlert } from '@/lib/alerts/quick';
 import type { AlertView } from '@/lib/alerts/client';
 import { ADAPTERS } from '@/lib/market/exchanges';
 import type { ExchangeId, InstrumentMeta } from '@/lib/market/exchanges';
@@ -38,4 +39,18 @@ export function editAlertLine(id: string, draft: number | null, alerts: readonly
 export function deleteAlertLine(id: string): void {
   removeLocal(id);
   void deleteAlert(id).catch(() => {});
+}
+
+/** "Save" on a just-placed line: a real alert at its price (error message, or null once saved). */
+export async function saveDraftLine(draft: number | null, exchange: ExchangeId, symbol: string, last: number | null, clear: () => void): Promise<string | null> {
+  if (draft === null) return null;
+  const err = await saveQuickPriceAlert(exchange, symbol, draft, last);
+  if (!err) clear(); // the saved alert's own line replaces the draft
+  return err;
+}
+
+/** A dragged line: a draft just moves; a saved alert is moved on the server (and re-armed). */
+export function moveAlertLineTo(id: string, price: number, last: number | null, setDraft: (p: number) => void): Promise<string | null> {
+  if (id === DRAFT_ID) { setDraft(price); return Promise.resolve(null); }
+  return moveAlertLine(id, price, last);
 }

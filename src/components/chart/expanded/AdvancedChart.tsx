@@ -85,6 +85,8 @@ interface AdvancedChartProps {
   onAlertPick: (price: number) => void;
   onAlertEdit: (id: string) => void;
   onAlertDelete: (id: string) => void;
+  onAlertSave: (id: string) => Promise<string | null>;
+  onAlertMove: (id: string, price: number) => Promise<string | null>;
   /** Hovered candle (null when the cursor leaves the chart). */
   onHover: (bar: RawCandle | null) => void;
   controls: RefObject<AdvancedChartControls | null>;
@@ -494,6 +496,12 @@ export default function AdvancedChart(props: AdvancedChartProps) {
           onAlertPick={props.onAlertPick}
           onAlertEdit={props.onAlertEdit}
           onAlertDelete={props.onAlertDelete}
+          onAlertSave={props.onAlertSave}
+          onAlertMove={props.onAlertMove}
+          onAlertPreview={(id, price) => {
+            const own = alertLines.find((l) => l.id === id)?.price;
+            if (own !== undefined) priceLines.current.get(id)?.applyOptions({ price: price ?? own });
+          }}
           svgRef={svgRef}
           controls={layerControls}
         />

@@ -103,6 +103,21 @@ export function patchAlert(userId: string, id: string, patch: Partial<Pick<Alert
   return next;
 }
 
+/**
+ * Move a price alert's level (dragging its chart line): the new level and the side it is crossed
+ * from, re-armed (a one-time alert that already fired is watching again).
+ */
+export function setAlertLevel(userId: string, id: string, level: number, direction: 'above' | 'below', now = Date.now()): Alert | null {
+  const list = alerts.load();
+  const i = list.findIndex((a) => a.id === id && a.userId === userId && a.kind === 'price');
+  if (i < 0) return null;
+  const next: Alert = { ...list[i], price: { level, direction }, status: 'active', lastTriggeredAt: null, updatedAt: now };
+  delete next.archivedReason;
+  alerts.save(list.map((a, k) => (k === i ? next : a)));
+  emit(userId, { type: 'alert', alert: next });
+  return next;
+}
+
 export function removeAlert(userId: string, id: string): boolean {
   const list = alerts.load();
   if (!list.some((a) => a.id === id && a.userId === userId)) return false;

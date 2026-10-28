@@ -19,7 +19,7 @@ import type { MarketType } from '@/lib/alerts/alertStore';
 import { ADAPTERS } from '@/lib/market/exchanges';
 import type { ChartTimeframe, ExchangeId } from '@/lib/market/exchanges';
 import type { SortPref } from '@/lib/settings/settings';
-import { alertLines, DRAFT_ID, deleteAlertLine, editAlertLine, tickerOf, venueMarket } from './alertForm';
+import { alertLines, DRAFT_ID, deleteAlertLine, editAlertLine, moveAlertLineTo, saveDraftLine, tickerOf, venueMarket } from './alertForm';
 import ChartCanvas from './ChartCanvas';
 import type { AlertLine } from './ChartCanvas';
 import ChartHeader from './ChartHeader';
@@ -113,6 +113,9 @@ function LiveChart({
   // Edit opens the alert wizard (prefilled); the draft line goes away once it's handed over.
   const edit = (id: string) => { if (editAlertLine(id, draft, alerts, exchange, symbol) && id === DRAFT_ID) setDraft(null); };
   const remove = (id: string) => { if (id === DRAFT_ID) setDraft(null); else deleteAlertLine(id); };
+  // Save turns the clicked line into a real alert; dragging a line moves it (saved alerts on the server).
+  const saveLine = () => saveDraftLine(draft, exchange, symbol, snapshot.stats.last, () => setDraft(null));
+  const moveLine = (id: string, price: number) => moveAlertLineTo(id, price, snapshot.stats.last, setDraft);
 
   const expand = expandable && !preview ? (onExpand ?? (() => setExpanded(true))) : undefined;
 
@@ -149,7 +152,7 @@ function LiveChart({
           preview={preview}
         />
         <div className="relative min-w-0 flex-1">
-          <ChartCanvas stream={stream} symbol={symbol} instrument={`${adapter.name} · ${marketType === 'futures' ? 'Futures' : 'Spot'}`.toUpperCase()} win={{ exchange, market: marketType, symbol }} stats={snapshot.stats} readOnly={preview} tradeLevels={tradeLevels} badge={badge} lines={preview ? NO_LINES : lines} onPick={preview ? noop : setDraft} onEdit={edit} onDelete={remove} />
+          <ChartCanvas stream={stream} symbol={symbol} instrument={`${adapter.name} · ${marketType === 'futures' ? 'Futures' : 'Spot'}`.toUpperCase()} win={{ exchange, market: marketType, symbol }} stats={snapshot.stats} readOnly={preview} tradeLevels={tradeLevels} badge={badge} lines={preview ? NO_LINES : lines} onPick={preview ? noop : setDraft} onEdit={edit} onDelete={remove} onSave={saveLine} onMove={moveLine} />
           {overlay && (
             <div className="absolute inset-0 z-30 flex flex-col items-center justify-center gap-3 bg-[#0B0C0E]/70 p-4 text-center text-xs text-sx-muted">
               <span>{overlay}</span>

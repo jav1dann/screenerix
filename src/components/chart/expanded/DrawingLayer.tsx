@@ -19,7 +19,6 @@ import { useImperativeHandle, useRef, useState } from 'react';
 import { Copy, Lock, LockOpen, Trash2 } from 'lucide-react';
 import type { PointerEvent as ReactPointerEvent, ReactNode, RefObject } from 'react';
 import type { IChartApi, ISeriesApi, Logical, UTCTimestamp } from 'lightweight-charts';
-import { IconAlarm, IconPencil, IconTrash } from '@/components/shared/icons';
 import { extendToBox, fibPrice, FIB_LEVELS, fmtDuration, logicalToTime, magnetSnap, measure, timeToLogical, translate } from '@/lib/drawings/geometry';
 import type { TimeAxis } from '@/lib/drawings/geometry';
 import { dashArray, DEFAULT_COLOR, DEFAULT_WIDTH, DRAWING_LABEL, DRAWING_PALETTE, LINE_STYLES, LINE_WIDTHS, PLACEMENT } from '@/lib/drawings/types';
@@ -28,6 +27,7 @@ import { fmtDateTime, fmtPct, fmtPrice } from '@/lib/format';
 import type { ChartStream } from '@/lib/market/chartStream';
 import { TIMEFRAME_MS } from '@/lib/market/exchanges';
 import { COLORS } from '@/lib/theme';
+import AlertLineOverlay from '../AlertLineOverlay';
 import type { AlertLine } from '../ChartCanvas';
 import { BTN_RESET } from '../styles';
 import { isDrawingTool } from './tools';
@@ -73,6 +73,12 @@ interface DrawingLayerProps {
   onAlertPick: (price: number) => void;
   onAlertEdit: (id: string) => void;
   onAlertDelete: (id: string) => void;
+  /** Save a just-placed line as a real alert (error message or null). */
+  onAlertSave: (id: string) => Promise<string | null>;
+  /** A line was dragged to `price` (error message or null). */
+  onAlertMove: (id: string, price: number) => Promise<string | null>;
+  /** Move the drawn line while it's dragged (null: back to its own price). */
+  onAlertPreview: (id: string, price: number | null) => void;
   svgRef: RefObject<SVGSVGElement | null>;
   controls: RefObject<DrawingLayerControls | null>;
 }
@@ -349,7 +355,7 @@ type Drag =
 export default function DrawingLayer(props: DrawingLayerProps) {
   const {
     chart, series, stream, view, width, height, fontFamily, tool, magnet, locked, hidden, drawings, selectedId,
-    onSelect, onCreate, onUpdate, onEditText, onPatch, onDelete, onClone, onToolDone, onHoverBar, alertLines, onAlertPick, onAlertEdit, onAlertDelete, svgRef, controls,
+    onSelect, onCreate, onUpdate, onEditText, onPatch, onDelete, onClone, onToolDone, onHoverBar, alertLines, onAlertPick, onAlertEdit, onAlertDelete, onAlertSave, onAlertMove, onAlertPreview, svgRef, controls,
   } = props;
   const [pending, setPending] = useState<{ kind: DrawingKind; points: DrawPoint[] } | null>(null);
   const [hover, setHover] = useState<DrawPoint | null>(null);
@@ -647,26 +653,19 @@ export default function DrawingLayer(props: DrawingLayerProps) {
         );
       })()}
 
-      {/* Price-alert popups above their lines (same look as the chart card). */}
-      {alertLines.map((l) => {
-        const y = proj.y(l.price);
-        if (y === null || y < 18 || y > height) return null;
-        return (
-          <div
-            key={l.id}
-            className="absolute left-2 z-20 flex items-center gap-1.5 rounded-md border border-solid border-sx-alert/50 bg-[#1A1710]/95 py-0.5 pl-2 pr-0.5 text-[11px] text-sx-alert shadow-lg shadow-black/40"
-            style={{ top: y - 24 }}
-          >
-            <IconAlarm />
-            <span className="font-semibold">Price alert</span>
-            <span className="tabular-nums text-sx-text/80">{fmtPrice(l.price)}</span>
-            {l.draft && <span className="rounded bg-sx-alert/15 px-1 text-[10px]">unsaved</span>}
-            {!l.active && !l.draft && <span className="rounded bg-white/10 px-1 text-[10px] text-sx-muted">triggered</span>}
-            <button type="button" className={`${BTN_RESET} grid h-5 w-5 place-items-center rounded hover:bg-sx-alert/15`} onClick={() => onAlertEdit(l.id)} aria-label="Edit alert" title="Edit alert"><IconPencil /></button>
-            <button type="button" className={`${BTN_RESET} grid h-5 w-5 place-items-center rounded hover:bg-sx-down/20 hover:text-sx-down`} onClick={() => onAlertDelete(l.id)} aria-label="Delete alert" title="Delete alert"><IconTrash /></button>
-          </div>
-        );
-      })}
+      {/* Price-alert popups and draggable lines (shared with the chart card). */}
+      <AlertLineOverlay
+        lines={alertLines}
+        ys={Object.fromEntries(alertLines.map((l) => [l.id, proj.y(l.price)]))}
+        height={height}
+        priceAt={(y) => series.coordinateToPrice(y)}
+        onPreview={onAlertPreview}
+        onSave={onAlertSave}
+        onMove={onAlertMove}
+        onEdit={onAlertEdit}
+        onDelete={onAlertDelete}
+        z={20}
+      />
     </>
   );
 }

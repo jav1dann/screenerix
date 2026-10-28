@@ -8,7 +8,6 @@ import {
 import type {
   AutoscaleInfo, CandlestickData, IChartApi, IPriceLine, ISeriesApi, MouseEventParams, Time, UTCTimestamp,
 } from 'lightweight-charts';
-import { IconAlarm, IconPencil, IconTrash } from '@/components/shared/icons';
 import { fmtDateTime, fmtPct, fmtPrice, fmtUsd } from '@/lib/format';
 import type { ChartStream } from '@/lib/market/chartStream';
 import { TIMEFRAME_MS } from '@/lib/market/exchanges';
@@ -24,10 +23,10 @@ import type { Settings } from '@/lib/settings/settings';
 import { TradeLevelLayer, withLevels } from '@/lib/strategies/chartLines';
 import type { TradeLevels } from '@/lib/strategies/chartLines';
 import { COLORS } from '@/lib/theme';
+import AlertLineOverlay from './AlertLineOverlay';
 import ChartWatermark from './ChartWatermark';
 import IndicatorLegend from './IndicatorLegend';
 import MeasureOverlay from './MeasureOverlay';
-import { BTN_RESET } from './styles';
 
 export interface AlertLine {
   id: string;
@@ -62,7 +61,13 @@ interface ChartCanvasProps {
   onPick: (price: number) => void;
   onEdit: (id: string) => void;
   onDelete: (id: string) => void;
+  /** Save a just-placed line as a real alert (error message or null). */
+  onSave?: (id: string) => Promise<string | null>;
+  /** A line was dragged to `price` (error message or null). */
+  onMove?: (id: string, price: number) => Promise<string | null>;
 }
+
+const NO_SAVE = async () => null;
 
 /** Sub-panes that fit a card of this height. */
 const paneBudget = (h: number) => (h < 260 ? 1 : h < 400 ? 2 : 4);
@@ -102,7 +107,7 @@ function layoutOptions(c: Settings['chart']) {
 const zoomOptions = (c: Settings['chart']) => ({ timeScale: { barSpacing: c.candleWidth, rightOffset: c.rightSpace } });
 
 export default function ChartCanvas({
-  stream, symbol, instrument = '', lines, onPick, onEdit, onDelete, scope = 'card', win = null, stats = null, liveLevels = null, readOnly = false, tradeLevels = null, badge,
+  stream, symbol, instrument = '', lines, onPick, onEdit, onDelete, onSave = NO_SAVE, onMove = NO_SAVE, scope = 'card', win = null, stats = null, liveLevels = null, readOnly = false, tradeLevels = null, badge,
 }: ChartCanvasProps) {
   const { chart: chartSettings } = useSettings();
   const indicators = useIndicators(scope);
@@ -121,6 +126,8 @@ export default function ChartCanvas({
   const linesRef = useRef(lines);
   const onPickRef = useRef(onPick);
   const [ys, setYs] = useState<Record<string, number | null>>({});
+  /** Height of the price pane (alert lines live there). */
+  const [paneH, setPaneH] = useState(0);
 
   useEffect(() => { linesRef.current = lines; onPickRef.current = onPick; settingsRef.current = chartSettings; ctxRef.current = layerCtx; indicatorsRef.current = indicators; });
 
@@ -175,6 +182,7 @@ export default function ChartCanvas({
         raf = 0;
         const next: Record<string, number | null> = {};
         for (const l of linesRef.current) next[l.id] = candles.priceToCoordinate(l.price);
+        setPaneH(chart.panes()[0]?.getHeight() ?? 0);
         setYs((prev) => {
           const keys = Object.keys(next);
           if (keys.length === Object.keys(prev).length && keys.every((k) => prev[k] === next[k])) return prev;
@@ -355,31 +363,24 @@ export default function ChartCanvas({
       <IndicatorLegend layer={layer} wrapRef={wrapRef} scope={scope} win={win} stats={stats} readOnly={readOnly} />
       {badge && <div className="pointer-events-none absolute bottom-8 left-11 z-20">{badge}</div>}
 
-      {/* Alert popups sit just above their line. */}
-      {lines.map((l) => {
-        const y = ys[l.id];
-        if (y === null || y === undefined || y < 18) return null;
-        return (
-          <div
-            key={l.id}
-            className="absolute left-2 z-10 flex items-center gap-1.5 rounded-md border border-solid border-sx-alert/50 bg-[#1A1710]/95 py-0.5 pl-2 pr-0.5 text-[11px] text-sx-alert shadow-lg shadow-black/40"
-            style={{ top: y - 24 }}
-          >
-            <IconAlarm />
-            <span className="font-semibold">Price alert</span>
-            <span className="tabular-nums text-sx-text/80">{fmtPrice(l.price)}</span>
-            {l.draft && <span className="rounded bg-sx-alert/15 px-1 text-[10px]">unsaved</span>}
-            {!l.active && !l.draft && <span className="rounded bg-white/10 px-1 text-[10px] text-sx-muted">triggered</span>}
-            <button type="button" className={`${BTN_RESET} grid h-5 w-5 place-items-center rounded hover:bg-sx-alert/15`} onClick={() => onEdit(l.id)} aria-label="Edit alert" title="Edit alert">
-              <IconPencil />
-            </button>
-            <button type="button" className={`${BTN_RESET} grid h-5 w-5 place-items-center rounded hover:bg-sx-down/20 hover:text-sx-down`} onClick={() => onDelete(l.id)} aria-label="Delete alert" title="Delete alert">
-              <IconTrash />
-            </button>
-          </div>
-        );
-      })}
-
+      {/* Alert popups above their lines, and dragging the lines (`ys` re-renders this on scroll / zoom). */}
+      {lines.length > 0 && (
+        <AlertLineOverlay
+          lines={lines}
+          ys={ys}
+          height={paneH}
+          priceAt={(y) => api.current?.candles.coordinateToPrice(y) ?? null}
+          onPreview={(id, price) => {
+            const line = priceLines.current.get(id);
+            const own = lines.find((l) => l.id === id)?.price;
+            if (line && own !== undefined) line.applyOptions({ price: price ?? own });
+          }}
+          onSave={onSave}
+          onMove={onMove}
+          onEdit={onEdit}
+          onDelete={onDelete}
+        />
+      )}
       {/* Shift+drag: temporary measurement box. */}
       <MeasureOverlay
         containerRef={wrapRef}
