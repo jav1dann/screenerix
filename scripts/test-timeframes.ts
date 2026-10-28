@@ -86,7 +86,7 @@ globalThis.fetch = (async (input: string | URL | Request) => {
   const q = u.searchParams;
   switch (`${u.hostname}${u.pathname}`) {
     case 'fapi.binance.com/fapi/v1/exchangeInfo':
-      return json({ symbols: ['TEST', 'REC', 'BKF', 'GAP'].map((b) => ({ status: 'TRADING', contractType: 'PERPETUAL', quoteAsset: 'USDT', baseAsset: b, symbol: `${b}USDT` })) });
+      return json({ symbols: ['TEST', 'REC', 'BKF', 'GAP', 'ONE'].map((b) => ({ status: 'TRADING', contractType: 'PERPETUAL', quoteAsset: 'USDT', baseAsset: b, symbol: `${b}USDT` })) });
     case 'fapi.binance.com/fapi/v1/aggTrades':
       // REC: only the newest 300 trades (30 s) and nothing older — like a busy coin on a venue whose trades don't page far.
       if (q.get('symbol') === 'RECUSDT') return json(q.has('fromId') ? [] : binanceAgg(TRADES[TRADES.length - 300].id));
@@ -272,6 +272,12 @@ async function backfill(): Promise<void> {
   const gap = await getSubMinuteCandles('binance', 'GAP', '30s');
   const failedFrom = TRADES.find((x) => x.id === TRADES[TRADES.length - 1000].id - 3_000)!.t;
   check('a failed backfill page: history stops there — exact candles, none spanning the hole', exact(gap.candles, T30, span) && gap.candles[0].t >= failedFrom, `${gap.candles.length} candles from ${new Date(gap.candles[0].t).toISOString().slice(11, 19)}`);
+
+  // 1s opened first (small backfill: 10 min of 1s), then 30s: 30s must still get its own, deeper backfill.
+  const one1 = await getSubMinuteCandles('binance', 'ONE', '1s');
+  const one30 = await getSubMinuteCandles('binance', 'ONE', '30s');
+  const m30 = (one30.candles.at(-1)!.t - one30.candles[0].t) / 60_000;
+  check('1s opened first, then 30s: 30s still gets its full backfill', one1.candles.length === 600 && one30.candles.length >= first.candles.length - 2 && exact(one30.candles, T30, span), `1s ${one1.candles.length} candles; 30s ${one30.candles.length} candles (${m30.toFixed(0)} min) vs ${first.candles.length} when opened first`);
 
   // Restart: saved to the data directory, loaded by the next recorder.
   await saveRecordings();

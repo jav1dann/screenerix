@@ -46,8 +46,11 @@ interface Series {
   fresh: boolean;
   /** Exchange time of the last trade received (its bucket is cut short when the connection drops). */
   lastT: number | null;
-  /** Backfilled from REST trades since this process started recording it (no need to again). */
-  backfilled: boolean;
+  /**
+   * Per timeframe: backfilled with that timeframe's full budget since this process started
+   * recording it (no need to again). Per timeframe: a 1s backfill reaches minutes — not 30s's hours.
+   */
+  backfilled: Record<SubMinute, boolean>;
 }
 
 interface VenueRecorder {
@@ -148,7 +151,7 @@ async function add(venue: ExchangeId, r: VenueRecorder, base: string, requestedU
 }
 
 function addSeries(r: VenueRecorder, base: string, meta: InstrumentMeta, requestedUntil: number): Series {
-  const s: Series = { meta, buckets: { '30s': [], '1s': [] }, partial: { '30s': new Set(), '1s': new Set() }, requestedUntil, fresh: true, lastT: null, backfilled: false };
+  const s: Series = { meta, buckets: { '30s': [], '1s': [] }, partial: { '30s': new Set(), '1s': new Set() }, requestedUntil, fresh: true, lastT: null, backfilled: { '30s': false, '1s': false } };
   r.series.set(base, s);
   r.byInst.set(meta.inst, base);
   return s;
@@ -168,9 +171,10 @@ function makeRoom(r: VenueRecorder): boolean {
  * Complete `tf` buckets built from REST trades for a coin (a chart opened it before it was
  * recorded): they fill buckets the recording is missing or only has partly — recorded complete
  * buckets win — and the coin is recorded from now on, so the next open is instant.
- * `candles` must be closed buckets (none still in progress).
+ * `candles` must be closed buckets (none still in progress). `complete`: the backfill went as far
+ * as `tf` needs (its own budget), so later opens of `tf` skip it.
  */
-export function recordBackfill(venue: ExchangeId, base: string, meta: InstrumentMeta, tf: SubMinute, candles: readonly RawCandle[], now = Date.now()): void {
+export function recordBackfill(venue: ExchangeId, base: string, meta: InstrumentMeta, tf: SubMinute, candles: readonly RawCandle[], complete: boolean, now = Date.now()): void {
   const r = recorders.get(venue);
   if (!r || !candles.length) return;
   let s = r.series.get(base);
@@ -187,15 +191,15 @@ export function recordBackfill(venue: ExchangeId, base: string, meta: Instrument
     if (!byT.has(c.t) || s.partial[tf].has(c.t)) { byT.set(c.t, { ...c }); s.partial[tf].delete(c.t); }
   }
   s.buckets[tf] = [...byT.values()].sort((a, b) => a.t - b.t).slice(-RECORD_KEEP[tf]);
-  s.backfilled = true;
+  if (complete) s.backfilled[tf] = true;
 }
 
 /**
- * Whether `base` was backfilled since recording started in this process: the recording has
+ * Whether `base` was backfilled for `tf` since recording started in this process: the recording has
  * carried on from there, so a new chart needs only the newest trades. (A recording loaded from
  * disk isn't: one backfill fills the time the server was down.)
  */
-export const wasBackfilled = (venue: ExchangeId, base: string): boolean => recorders.get(venue)?.series.get(base)?.backfilled ?? false;
+export const wasBackfilled = (venue: ExchangeId, base: string, tf: SubMinute): boolean => recorders.get(venue)?.series.get(base)?.backfilled[tf] ?? false;
 
 /* ── Saved recording (30s only: 1s keeps 15 min, stale after any restart) ── */
 

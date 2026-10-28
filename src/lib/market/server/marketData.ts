@@ -297,7 +297,7 @@ async function loadSubMinute(id: ExchangeId, base: string, tf: SubMinute, cursor
   // in parallel where the venue's trade ids are sequential (Binance, Coinbase).
   const newestT = trades[trades.length - 1]?.t ?? Date.now();
   const recordedFrom = older ? undefined : recordedCandles(id, base, tf)[0]?.t;
-  const covered = recordedFrom !== undefined && (recordedFrom <= newestT - want + span || wasBackfilled(id, base));
+  const covered = recordedFrom !== undefined && (recordedFrom <= newestT - want + span || wasBackfilled(id, base, tf));
   const firstId = Number(trades[0]?.id);
   let budget = older ? pages : covered ? 1 : pages;
   if (!older && !covered && rest.tradesFromIdUrl && Number.isInteger(firstId) && firstId > 0) {
@@ -334,7 +334,9 @@ async function loadSubMinute(id: ExchangeId, base: string, tf: SubMinute, cursor
       const sp = TIMEFRAME_MS[t];
       const all = candlesFromTrades(scaled, sp, Infinity);
       const closed = (exhausted ? all : all.slice(1)).filter((c) => c.t + sp <= asOf);
-      recordBackfill(id, base, meta, t, closed);
+      // This request backfilled as deep as `tf` needs; that covers `t` too only if `t` needs no more.
+      const complete = !covered && BACKFILL_PAGES[tf] >= BACKFILL_PAGES[t];
+      recordBackfill(id, base, meta, t, closed, complete);
     }
   }
   // First load: the server's recording fills in before the trades page (the page is exact for the
