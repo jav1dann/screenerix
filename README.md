@@ -4,8 +4,10 @@ Real-time crypto screener and trading terminal (Next.js 16).
 
 - **Configure:** copy [`.env.example`](.env.example) to `.env.local` and fill it in.
 - **Develop:** `npm run dev` · **Check:** `npm run lint`, `npm run typecheck`, `npm run build`
-- **Test alerts & the Telegram bot:** `npm run test:alerts` (local mocks; needs `openssl`)
-- **Test the strategy rules:** `npm run test:strategies` (synthetic candles)
+- **Test everything:** `npm test` — runs the three suites below
+  - `npm run test:timeframes` — candles for every chart timeframe (30s/1s included) against a synthetic market
+  - `npm run test:strategies` — the strategy rules on synthetic candles
+  - `npm run test:alerts` — price, complex and strategy alerts + the Telegram bot + push (local mocks; needs `openssl`)
 - **Deploy:** [docs/PRODUCTION.md](docs/PRODUCTION.md) — environment, checks, and a live Telegram alert walkthrough.
 
 ---

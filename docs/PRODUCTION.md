@@ -29,8 +29,10 @@ npm ci
 npm run lint
 npm run typecheck    # next typegen + tsc: route types exist without a build
 npm run build          # with NEXT_PUBLIC_TELEGRAM_BOT_USERNAME set
-npm run test:alerts    # alert worker + Telegram bot + push, against local mocks (needs openssl)
-npm run test:strategies  # continuation-after-sweep rules + strength index, on synthetic candles
+npm test               # all three suites below
+#   test:timeframes  — every chart timeframe (30s/1s, aggregated ones, scroll-back) vs a synthetic market
+#   test:strategies  — continuation-after-sweep rules + strength index, on synthetic candles
+#   test:alerts      — price / complex / strategy alerts, Telegram bot, push, against local mocks (needs openssl)
 npm audit --omit=dev
 ```
 
@@ -71,7 +73,14 @@ Expected on start:
    a system notification; Recent triggers shows "Push · 1 device".
 5. **Bot commands.** `/language` re-asks; `/stop` disconnects (Account settings shows "Not connected"
    after a reload); `/start` again shows how to reconnect.
-6. **Failure path.** Block the bot in Telegram, fire another alert → Recent triggers shows
+6. **Chart alerts.** Click above / below the price on any chart → **Save** on the line → it appears in
+   **Alerts** (Active) and is delivered like step 3. Drag the line: the price label follows the
+   pointer and the new level is saved on release (the alert re-arms).
+7. **Strategy alert.** **Create alert → Strategy alert** → Any coin, Any strategy, Min strength Any,
+   *When detected* → save. When the Strategies tab lists a new setup on that exchange, Telegram gets
+   "🔔 **COIN** · … — forming: entry …, SL …, TP1 … · strength …%". Narrow it (one strategy, 1m,
+   HIGH ≥ 70, *When active*) for day-to-day use.
+8. **Failure path.** Block the bot in Telegram, fire another alert → Recent triggers shows
    "Telegram failed", the account is unlinked, and other users' alerts keep arriving.
 
 If step 1's link opens the wrong bot, see the mismatch line in section 3.

@@ -7,6 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
+    "test": "npm run test:timeframes && npm run test:strategies && npm run test:alerts",
     "test:alerts": "node scripts/test-alerts.mjs",
     "typecheck": "next typegen && tsc --noEmit",
     "test:strategies": "tsx --tsconfig tsconfig.json scripts/test-strategies.ts",
