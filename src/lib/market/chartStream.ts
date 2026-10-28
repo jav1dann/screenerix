@@ -20,7 +20,12 @@ import type { RangeWindow } from './terminalPrefs';
 import type { SocketChannel } from './socketHub';
 import type { ConnState } from './types';
 
+/** Candles a chart card opens with. */
 const SEED_LIMIT = 300;
+/** Candles the full chart (expanded / Market Review) opens with: drawn once, all at once. */
+export const FULL_HISTORY = 1_000;
+/** Candles per scroll-back page. */
+const OLDER_PAGE = 500;
 /** 1m candles kept for range stats — enough for the longest window (4h). */
 const MINUTE_SEED = Math.max(...Object.values(RANGE_MINUTES));
 const RELEASE_DELAY_MS = 2_000; // survive quick unmount/remount (StrictMode, tab switches)
@@ -66,11 +71,17 @@ export interface ChartStream {
   retain(): () => void;
   retry(): void;
   /**
-   * Prepend the page of candles before the oldest one (for scrolling back / go-to-date). Sub-minute
-   * timeframes page back through the server's cursor (native candles or older trades).
-   * Resolves false at the start of the available history or while not ready.
+   * Prepend the page of candles before the oldest one (`count`, default 500; for scrolling back /
+   * go-to-date). Sub-minute timeframes page back through the server's cursor (native candles or
+   * older trades). Resolves false at the start of the available history or while not ready.
    */
-  loadOlder(): Promise<boolean>;
+  loadOlder(count?: number): Promise<boolean>;
+  /**
+   * Resolves once the stream has loaded (or failed) and holds at least `count` candles — or all
+   * there are. The missing range is fetched in one request; later seeds start that large.
+   * Sub-minute timeframes: their seed is already the whole available window.
+   */
+  ensureHistory(count: number): Promise<void>;
 }
 
 const EMPTY_RANGES = Object.fromEntries(RANGE_WINDOWS.map((w) => [w, null])) as Record<RangeWindow, number | null>;
@@ -113,6 +124,11 @@ function createChartStream(key: ChartKey): ChartStream & { dispose(): void } {
   // Grows when older history is prepended, so live bars don't trim what was loaded.
   let maxCandles = isSubMinute(tf) ? 2_000 : 1_000;
   let olderReq: Promise<boolean> | null = null;
+  /** History size the seed loads: grows to what the largest chart on this stream asked for. */
+  let wanted = SEED_LIMIT;
+  /** Waiting for the load to settle (ready / unlisted / error). */
+  let settleWaiters: Array<() => void> = [];
+  const settled = () => { const w = settleWaiters; settleWaiters = []; w.forEach((r) => r()); };
   let historyStart = false;
   /** Sub-minute: where the page before the oldest candle starts (null: none available). */
   let subCursor: string | null = null;
@@ -200,7 +216,7 @@ function createChartStream(key: ChartKey): ChartStream & { dispose(): void } {
     const [main, oneMinute] = await Promise.all([
       subMinute
         ? fetchSubMinute(exchange, symbol, tf).then((r) => ({ candles: r.candles, lastTrade: r.asOf, cursor: r.cursor }))
-        : fetchKlines(exchange, symbol, tf as Timeframe, SEED_LIMIT).then((c) => ({ candles: c, lastTrade: Date.now(), cursor: null })),
+        : fetchKlines(exchange, symbol, tf as Timeframe, wanted).then((c) => ({ candles: c, lastTrade: Date.now(), cursor: null })),
       needsMinute ? fetchKlines(exchange, symbol, '1m', MINUTE_SEED) : Promise.resolve(null),
     ]);
     if (g !== gen) return;
@@ -224,6 +240,7 @@ function createChartStream(key: ChartKey): ChartStream & { dispose(): void } {
     status = 'ready';
     emit({ type: 'reset', candles });
     emitter.notify();
+    settled();
   }
 
   /** Automatic re-attempts of a failed load (transient upstream / network errors), before showing the error. */
@@ -242,7 +259,7 @@ function createChartStream(key: ChartKey): ChartStream & { dispose(): void } {
     try {
       const m = await fetchInstrument(exchange, symbol);
       if (g !== gen) return;
-      if (!m) { status = 'unlisted'; emitter.notify(); return; }
+      if (!m) { status = 'unlisted'; emitter.notify(); settled(); return; }
       meta = m;
       subscribeTopics(m); // stream while the seed downloads; early data is buffered
       await seed(g);
@@ -263,6 +280,7 @@ function createChartStream(key: ChartKey): ChartStream & { dispose(): void } {
       status = 'error';
       error = e instanceof Error ? e.message : String(e);
       emitter.notify();
+      settled();
     }
   }
 
@@ -347,7 +365,7 @@ function createChartStream(key: ChartKey): ChartStream & { dispose(): void } {
         if (refs === 0) setTimeout(() => { if (refs === 0) release(key); }, RELEASE_DELAY_MS);
       };
     },
-    loadOlder() {
+    loadOlder(count = OLDER_PAGE) {
       if (status !== 'ready' || historyStart || !candles.length) return Promise.resolve(false);
       if (olderReq) return olderReq;
       const g = gen;
@@ -356,7 +374,7 @@ function createChartStream(key: ChartKey): ChartStream & { dispose(): void } {
           if (g === gen) subCursor = r.cursor;
           return r.candles;
         })
-        : fetchKlines(exchange, symbol, tf as Timeframe, SEED_LIMIT, candles[0].t - 1);
+        : fetchKlines(exchange, symbol, tf as Timeframe, Math.max(2, Math.min(count, 1_500)), candles[0].t - 1);
       olderReq = page
         .then((older) => {
           if (g !== gen) return false;
@@ -370,6 +388,15 @@ function createChartStream(key: ChartKey): ChartStream & { dispose(): void } {
         })
         .finally(() => { olderReq = null; });
       return olderReq;
+    },
+    async ensureHistory(count) {
+      if (count > wanted) { wanted = count; maxCandles = Math.max(maxCandles, count + 1_000); }
+      if (status === 'loading') await new Promise<void>((r) => settleWaiters.push(r));
+      if (isSubMinute(tf)) return;
+      // Opened on a smaller seed (a chart card's): fetch the rest in one go.
+      for (let i = 0; i < 3 && status === 'ready' && !historyStart && candles.length < count; i++) {
+        if (!(await self.loadOlder(count - candles.length))) break;
+      }
     },
     retry() {
       attempts = 0;

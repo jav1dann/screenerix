@@ -24,6 +24,7 @@ import type { DrawPoint, Drawing, DrawingKind } from '@/lib/drawings/types';
 import { fmtDateTime, fmtPrice } from '@/lib/format';
 import { IndicatorLayer } from '@/lib/indicators/engine';
 import type { IndicatorWindow } from '@/lib/indicators/ui';
+import { FULL_HISTORY } from '@/lib/market/chartStream';
 import type { ChartStats, ChartStream } from '@/lib/market/chartStream';
 import { TIMEFRAME_MS } from '@/lib/market/exchanges';
 import type { RawCandle } from '@/lib/market/exchanges';
@@ -84,6 +85,8 @@ interface AdvancedChartProps {
   /** A strategy formation's Entry / SL / TP1 / TP2. */
   tradeLevels?: TradeLevels | null;
   onAlertPick: (price: number) => void;
+  /** True while the chart waits for its full history (nothing is drawn until it's all there). */
+  onHistoryLoading?: (loading: boolean) => void;
   onAlertEdit: (id: string) => void;
   onAlertDelete: (id: string) => void;
   onAlertSave: (id: string) => Promise<string | null>;
@@ -154,8 +157,8 @@ export default function AdvancedChart(props: AdvancedChartProps) {
   useEffect(() => { layerCtx.current = { exchange: win.exchange, market: win.market, symbol: win.symbol, tf: stream.key.tf }; });
 
   // Latest callbacks for long-lived chart subscriptions.
-  const cb = useRef({ onHover: props.onHover, onSelect: props.onSelect, onAlertPick: props.onAlertPick, selectedId: props.selectedId, tool });
-  useEffect(() => { cb.current = { onHover: props.onHover, onSelect: props.onSelect, onAlertPick: props.onAlertPick, selectedId: props.selectedId, tool }; });
+  const cb = useRef({ onHover: props.onHover, onSelect: props.onSelect, onAlertPick: props.onAlertPick, onHistoryLoading: props.onHistoryLoading, selectedId: props.selectedId, tool });
+  useEffect(() => { cb.current = { onHover: props.onHover, onSelect: props.onSelect, onAlertPick: props.onAlertPick, onHistoryLoading: props.onHistoryLoading, selectedId: props.selectedId, tool }; });
 
   /* ── Create the chart (callback ref: re-created when stream / symbol change) ── */
   const hostRef = useCallback((host: HTMLDivElement | null) => {
@@ -247,14 +250,24 @@ export default function AdvancedChart(props: AdvancedChartProps) {
       layer.setBars(data, true);
       anchorLevels(data);
     };
-    setAll(stream.getCandles());
-    chart.timeScale().scrollToRealTime(); // new timeframe / symbol: jump to the live edge
-    const offData = stream.onData((e) => {
-      if (e.type === 'reset') { setAll(e.candles); return; }
-      try { candles.update(toBar(e.candle)); } catch { setAll(stream.getCandles()); return; }
-      anchorLevels(stream.getCandles());
-      dirty = true;
-      if (!raf) raf = requestAnimationFrame(flush);
+    // New symbol / timeframe: the whole history first, drawn once — never a short series that then
+    // grows. Until it's there the chart is empty (the workspace shows "Loading…").
+    let alive = true;
+    let offData = () => {};
+    setAll([]);
+    cb.current.onHistoryLoading?.(true);
+    void stream.ensureHistory(FULL_HISTORY).then(() => {
+      if (!alive) return;
+      setAll(stream.getCandles());
+      chart.timeScale().scrollToRealTime(); // jump to the live edge
+      cb.current.onHistoryLoading?.(false);
+      offData = stream.onData((e) => {
+        if (e.type === 'reset') { setAll(e.candles); return; }
+        try { candles.update(toBar(e.candle)); } catch { setAll(stream.getCandles()); return; }
+        anchorLevels(stream.getCandles());
+        dirty = true;
+        if (!raf) raf = requestAnimationFrame(flush);
+      });
     });
 
     const onMove = (param: MouseEventParams<Time>) => {
@@ -305,6 +318,7 @@ export default function AdvancedChart(props: AdvancedChartProps) {
     loop = requestAnimationFrame(tick);
 
     return () => {
+      alive = false;
       cancelAnimationFrame(raf);
       cancelAnimationFrame(loop);
       offData();

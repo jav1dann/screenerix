@@ -90,6 +90,8 @@ export default function ChartWorkspace({ symbol, exchange, marketType, initialIn
   const { stream, snapshot } = useChartStream(exchange, symbol, tf);
   const drawings = useDrawings(exchange, symbol);
   const alerts = useAlerts(exchange, symbol);
+  /** The chart is still fetching its full history (it draws nothing until then). */
+  const [historyLoading, setHistoryLoading] = useState(true);
   const ticker = tickerOf(snapshot.meta, symbol, exchange);
   const displayTicker = `${ticker}${market === 'futures' ? '.P' : ''}`;
 
@@ -213,7 +215,7 @@ export default function ChartWorkspace({ symbol, exchange, marketType, initialIn
   const win = { exchange, market, symbol };
   const overlay = snapshot.status === 'unlisted' ? `${symbol} isn’t listed on ${adapter.name}.`
     : snapshot.status === 'error' ? (snapshot.error ?? 'Market data unavailable')
-    : snapshot.status === 'loading' ? `Loading ${displayTicker} · ${tf}…`
+    : snapshot.status === 'loading' || historyLoading ? `Loading ${displayTicker} · ${tf}…`
     : null;
 
   const frame = modal
@@ -292,6 +294,7 @@ export default function ChartWorkspace({ symbol, exchange, marketType, initialIn
               levels={levels}
               tradeLevels={tradeLevels}
               onAlertPick={pickAlert}
+              onHistoryLoading={setHistoryLoading}
               onAlertEdit={editAlert}
               onAlertDelete={deleteAlert}
               onAlertSave={saveAlertLine}

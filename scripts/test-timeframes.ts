@@ -70,6 +70,14 @@ const HOURLY: RawCandle[] = [];
     HOURLY.push({ t: h0 + i * 3_600_000, o, h: Math.max(o, p) + 0.5, l: Math.min(o, p) - 0.5, c: p, v: 10 + i });
   }
 }
+/** 2000 one-minute candles for Bybit (1000 per upstream page): full chart history must page server-side. */
+const MINUTES: RawCandle[] = [];
+{
+  const m0 = Math.floor(NOW / 60_000) * 60_000 - 1_999 * 60_000;
+  for (let i = 0; i < 2_000; i++) MINUTES.push({ t: m0 + i * 60_000, o: 10 + i, h: 11 + i, l: 9 + i, c: 10.5 + i, v: i + 1 });
+}
+let bybitKlineRequests = 0;
+
 globalThis.fetch = (async (input: string | URL | Request) => {
   requests++;
   const u = new URL(typeof input === 'string' ? input : input instanceof URL ? input.href : input.url);
@@ -81,6 +89,14 @@ globalThis.fetch = (async (input: string | URL | Request) => {
       // REC: only the newest 300 trades (30 s) and nothing older — like a busy coin on a venue whose trades don't page far.
       if (q.get('symbol') === 'RECUSDT') return json(q.has('fromId') ? [] : binanceAgg(TRADES[TRADES.length - 300].id));
       return json(q.has('fromId') ? binanceAgg(Number(q.get('fromId'))) : binanceAgg(TRADES[TRADES.length - 1000].id));
+    case 'api.bybit.com/v5/market/instruments-info':
+      return json({ result: { list: [{ status: 'Trading', quoteCoin: 'USDT', contractType: 'LinearPerpetual', baseCoin: 'TEST', symbol: 'TESTUSDT' }] } });
+    case 'api.bybit.com/v5/market/kline': {
+      bybitKlineRequests++;
+      const end = q.has('end') ? Number(q.get('end')) : Infinity;
+      const rows = MINUTES.filter((c) => c.t <= end).slice(-Math.min(1000, Number(q.get('limit'))));
+      return json({ result: { list: rows.reverse().map((c) => [String(c.t), String(c.o), String(c.h), String(c.l), String(c.c), String(c.v), '0']) } });
+    }
     case 'www.okx.com/api/v5/public/instruments':
       return json({ data: [{ state: 'live', instId: 'TEST-USDT-SWAP', ctVal: '1' }] });
     case 'www.okx.com/api/v5/market/candles': {
@@ -131,7 +147,9 @@ async function subMinute(venue: 'binance' | 'okx' | 'gate', tf: SubMinute, label
     if (page.candles.some((c) => !sameCandle(c, T.get(c.t)))) exact = false;
     series = [...page.candles, ...series];
   }
-  check(`${label}: scrolled-back pages join with no gap or overlap`, joined && pagesLoaded > 0, `${pagesLoaded} older pages`);
+  // The first load may already hold the whole (3 h) synthetic market: then there's nothing to page.
+  const fromStart = first.candles[0].t <= START + span;
+  check(`${label}: scrolled-back pages join with no gap or overlap`, joined && (pagesLoaded > 0 || fromStart), fromStart && !pagesLoaded ? 'first load already reaches the start of the data' : `${pagesLoaded} older pages`);
   check(`${label}: scrolled-back candles are exact too`, exact);
   const minutes = (series[series.length - 1].t - series[0].t) / 60_000;
   // 1s from trades on a busy coin: each scroll-back is a few thousand trades (minutes, not hours).
@@ -189,7 +207,7 @@ async function recorded(): Promise<void> {
   const span = 30_000;
   await sleep(5_100); // past the loader's 5 s cache of the first (pre-recording) answer
   const first = await getSubMinuteCandles('binance', 'REC', '30s');
-  check('30s chart now opens with recorded history (240 candles)', first.candles.length === 240, `${first.candles.length} candles, ${((first.candles.at(-1)!.t - first.candles[0].t) / 3_600_000).toFixed(1)} h`);
+  check('30s chart now opens with the whole recording at once (3 h here; up to 6 h)', first.candles.length >= 350 && first.candles[0].t - START < 60_000, `${first.candles.length} candles, ${((first.candles.at(-1)!.t - first.candles[0].t) / 3_600_000).toFixed(1)} h`);
   const wrong = closed(first.candles, span).filter((c) => !sameCandle(c, T30.get(c.t)));
   check('every recorded candle equals the true candle (OHLCV)', wrong.length === 0, wrong.length ? `first wrong at ${new Date(wrong[0].t).toISOString()}` : `${first.candles.length} checked`);
   check('candles are in order, aligned, without duplicates', first.candles.every((c, i) => c.t % span === 0 && (i === 0 || c.t > first.candles[i - 1].t)));
@@ -204,7 +222,7 @@ async function recorded(): Promise<void> {
     if (older.candles.at(-1)!.t >= series[0].t) joined = false;
     series = [...older.candles, ...series];
   }
-  check('scrolling back pages through the recording', pages >= 1 && joined, `${pages} older page(s)`);
+  check('nothing older left to page in (it all came in the first answer)', pages === 0 && joined && first.cursor === null, `${pages} older page(s)`);
   check('…older recorded candles are exact too', series.every((c) => c.t + span > TRADES[TRADES.length - 1].t || sameCandle(c, T30.get(c.t))));
   check('…and the scroll-back ends (no cursor past the recording)', cursor === null);
   const startBucket = Math.floor(START / span) * span;
@@ -252,6 +270,19 @@ async function main(): Promise<void> {
 
   section('Recorded 30s history (server trade recorder)');
   await recorded();
+
+  section('Full chart history in one answer (server pages upstream)');
+  const full = await getKlines('bybit', 'TEST', '1m', 1_500);
+  const want = MINUTES.slice(-1_500);
+  check('1500 × 1m from a venue serving 1000 per request: all of them', full.length === 1_500, `${full.length} candles in ${bybitKlineRequests} upstream requests`);
+  check('…contiguous and exact, oldest first, no duplicates', full.every((c, i) => sameCandle(c, want[i])));
+  check('…in two upstream requests (1000 + 500)', bybitKlineRequests === 2);
+  bybitKlineRequests = 0;
+  const older = await getKlines('bybit', 'TEST', '1m', 1_500, MINUTES[1_499].t);
+  check('with `end`: the 1500 before it (clipped at the start of the data)', older.length === 1_500 && older[0].t === MINUTES[0].t && older.at(-1)!.t === MINUTES[1_499].t, `${older.length} candles`);
+  bybitKlineRequests = 0;
+  const small = await getKlines('bybit', 'TEST', '1m', 300);
+  check('small requests stay one upstream request', small.length === 300 && bybitKlineRequests === 1);
 
   section('Aggregated klines (no partial first candle)');
   // 300 = the chart's seed size: more than the window holds, so nothing would hide a partial first candle.

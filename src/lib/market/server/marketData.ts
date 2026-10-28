@@ -120,6 +120,9 @@ function baseTimeframe(id: ExchangeId, tf: Timeframe): Timeframe {
   return base;
 }
 
+/** Most upstream requests one getKlines call spends (OKX / Coinbase: 300 per page; Bitget history: 200). */
+const KLINE_PAGES = 8;
+
 /** Oldest-first candles in base-unit prices and base-unit volume; non-native timeframes are aggregated. */
 /** Latest `limit` candles, or (with `end`, ms) the `limit` candles opening at or before `end`. */
 export async function getKlines(id: ExchangeId, base: string, tf: Timeframe, limit: number, end?: number): Promise<RawCandle[]> {
@@ -129,8 +132,19 @@ export async function getKlines(id: ExchangeId, base: string, tf: Timeframe, lim
   const factor = TIMEFRAME_MS[tf] / TIMEFRAME_MS[src];
   // Aggregated timeframes end on a whole target bar: the source window closes where that bar does.
   const srcEnd = end === undefined ? undefined : Math.floor(end / TIMEFRAME_MS[tf]) * TIMEFRAME_MS[tf] + TIMEFRAME_MS[tf] - TIMEFRAME_MS[src];
-  const raw = adapter.rest.parseKlines(await upstreamJson(adapter.rest.klinesUrl(meta, src, Math.min(limit * factor, adapter.klineLimit), srcEnd)), src, adapter.klineLimit)
-    .filter((c) => srcEnd === undefined || c.t <= srcEnd);
+  const want = limit * factor;
+  const page = async (pageEnd: number | undefined, n: number) => adapter.rest.parseKlines(await upstreamJson(adapter.rest.klinesUrl(meta, src, Math.min(n, adapter.klineLimit), pageEnd)), src, adapter.klineLimit)
+    .filter((c) => pageEnd === undefined || c.t <= pageEnd);
+  // More than one upstream page holds (a chart's full history): page back here, so the browser gets it in one answer.
+  let raw = await page(srcEnd, want);
+  for (let i = 1; raw.length < want && i < KLINE_PAGES; i++) {
+    const before = raw[0]?.t;
+    if (before === undefined) break;
+    let older: RawCandle[];
+    try { older = (await page(before - 1, want - raw.length)).filter((c) => c.t < before); } catch { break; } // keep what we have
+    if (!older.length) break;
+    raw = [...older, ...raw];
+  }
   const k = meta.priceScale;
   const scaled = raw.map((c) => ({ t: c.t, o: c.o * k, h: c.h * k, l: c.l * k, c: c.c * k, v: c.v * meta.contractSize, ...(c.n === undefined ? {} : { n: c.n }), ...(c.tb === undefined ? {} : { tb: c.tb * meta.contractSize }) }));
   // Aggregated: the source window rarely starts on a target bar's open, so its first bar is dropped (partial).
@@ -151,7 +165,7 @@ export async function getTrades(id: ExchangeId, base: string): Promise<RawTrade[
  */
 const SUB_MINUTE: Record<SubMinute, { bars: number; pages: number }> = {
   '1s': { bars: 600, pages: 3 },
-  '30s': { bars: 240, pages: 6 },
+  '30s': { bars: 720, pages: 6 }, // 6 h — the server's recording (tradeRecorder) holds that much
 };
 
 const scaleCandle = (c: RawCandle, m: InstrumentMeta): RawCandle => ({

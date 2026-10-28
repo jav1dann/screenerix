@@ -104,6 +104,7 @@ function createRatioStream(key: RatioKey): ChartStream {
     retry() { legA.retry(); legB.retry(); },
     // A joined ratio series has no paged history of its own.
     loadOlder: () => Promise.resolve(false),
+    ensureHistory: () => Promise.resolve(), // the ratio series is seeded whole
   };
 }
 

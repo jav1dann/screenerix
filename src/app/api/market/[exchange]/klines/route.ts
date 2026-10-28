@@ -8,6 +8,9 @@ import { getKlines, getSubMinuteCandles, isBaseSymbol, parseCursor, upstreamErro
  * `tf=1s` / `tf=30s` → { candles, asOf, cursor }: recent sub-minute history (no `limit` / `end`); pass `cursor`
  * back for the page before it (see getSubMinuteCandles).
  */
+/** A chart's full history in one request (the server pages upstream as needed). */
+const MAX_LIMIT = 1500;
+
 export async function GET(req: NextRequest, ctx: RouteContext<'/api/market/[exchange]/klines'>) {
   const { exchange } = await ctx.params;
   const q = req.nextUrl.searchParams;
@@ -29,7 +32,7 @@ export async function GET(req: NextRequest, ctx: RouteContext<'/api/market/[exch
     }
   }
   if (!isTimeframe(tf)) return Response.json({ error: 'Unsupported timeframe' }, { status: 400 });
-  if (!Number.isInteger(limit) || limit < 2 || limit > 300) return Response.json({ error: 'limit must be 2–300' }, { status: 400 });
+  if (!Number.isInteger(limit) || limit < 2 || limit > MAX_LIMIT) return Response.json({ error: `limit must be 2–${MAX_LIMIT}` }, { status: 400 });
   if (end !== undefined && !(Number.isInteger(end) && end > 0)) return Response.json({ error: 'end must be a timestamp in ms' }, { status: 400 });
 
   try {
