@@ -18,7 +18,7 @@ export const directionFor = (level: number, last: number | null): 'above' | 'bel
 const SERVER_DOWN = 'Couldn’t reach the server. Try again.';
 
 /**
- * Save `level` as a one-time price alert with the account's working channels: a browser
+ * Save `level` (to six significant digits, like a dragged line) as a one-time price alert with the account's working channels: a browser
  * notification, Telegram when it's linked, push when this browser is subscribed. Resolves to an
  * error message, or null once saved (the line then comes from the alert list).
  */
@@ -26,7 +26,7 @@ export async function saveQuickPriceAlert(exchange: ExchangeId, symbol: string, 
   const { channels } = alertsClient.getSnapshot();
   const push = channels.push.configured && (await pushEnabled().catch(() => false));
   const input: AlertInput = {
-    kind: 'price', exchange, symbol, price: { level, direction: directionFor(level, last) },
+    kind: 'price', exchange, symbol, price: { level: +level.toPrecision(6), direction: directionFor(level, last) },
     channels: { browser: true, telegram: channels.telegram.linked, push },
     sound: 'beep', mode: 'once', repeatMinutes: 5,
   };

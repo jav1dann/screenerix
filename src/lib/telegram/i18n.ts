@@ -4,6 +4,7 @@
  * it's stored on the account (`UserRecord.lang`). Pure — no I/O.
  */
 import { METRIC_BY_ID } from '@/lib/alerts/types';
+import { STRATEGY_BY_ID } from '@/lib/strategies/catalog';
 import type { AlertDetail, AlertEvent, Condition, Metric, MetricWindow } from '@/lib/alerts/types';
 import { fmtPrice } from '@/lib/format';
 import { ADAPTERS } from '@/lib/market/exchanges';
@@ -41,6 +42,10 @@ interface Strings {
   now: string;
   metric: Record<Metric, string>;
   window: Record<MetricWindow, string>;
+  /** Strategy alerts: the setup's stage, levels and strength. */
+  stage: Record<'FORMING' | 'ACTIVE' | 'LATE' | 'INVALIDATED', string>;
+  entry: string;
+  strength: string;
   commands: { start: string; language: string; stop: string };
 }
 
@@ -65,6 +70,9 @@ export const STRINGS: Record<Lang, Strings> = {
     now: 'now',
     metric: { change: 'change', volSpike: 'volume', price: 'price', funding: 'funding', oiChange: 'OI' },
     window: { '1m': '1m', '5m': '5m', '15m': '15m', '1h': '1h' },
+    stage: { FORMING: 'forming', ACTIVE: 'active', LATE: 'late', INVALIDATED: 'invalidated' },
+    entry: 'entry',
+    strength: 'strength',
     commands: { start: 'Connect or show status', language: 'Change the language', stop: 'Disconnect from Screenerix' },
   },
   az: {
@@ -85,6 +93,9 @@ export const STRINGS: Record<Lang, Strings> = {
     now: 'indi',
     metric: { change: 'dəyişmə', volSpike: 'həcm', price: 'qiymət', funding: 'fandinq', oiChange: 'OI' },
     window: { '1m': '1 dəq', '5m': '5 dəq', '15m': '15 dəq', '1h': '1 saat' },
+    stage: { FORMING: 'formalaşır', ACTIVE: 'aktiv', LATE: 'gecikib', INVALIDATED: 'ləğv olunub' },
+    entry: 'giriş',
+    strength: 'güc',
     commands: { start: 'Qoşulmaq və ya statusu göstərmək', language: 'Dili dəyişmək', stop: 'Screenerix-dən ayırmaq' },
   },
   ru: {
@@ -105,6 +116,9 @@ export const STRINGS: Record<Lang, Strings> = {
     now: 'сейчас',
     metric: { change: 'изменение', volSpike: 'объём', price: 'цена', funding: 'фандинг', oiChange: 'OI' },
     window: { '1m': '1 мин', '5m': '5 мин', '15m': '15 мин', '1h': '1 ч' },
+    stage: { FORMING: 'формируется', ACTIVE: 'активна', LATE: 'поздно', INVALIDATED: 'отменена' },
+    entry: 'вход',
+    strength: 'сила',
     commands: { start: 'Подключить или показать статус', language: 'Сменить язык', stop: 'Отключиться от Screenerix' },
   },
 };
@@ -132,6 +146,12 @@ export function triggerText(e: Pick<AlertEvent, 'price' | 'text'> & { detail?: A
   const d = e.detail;
   if (!d) return e.text;
   if (d.kind === 'price') return (d.direction === 'above' ? t.rose : t.fell)(fmtPrice(e.price), fmtPrice(d.level));
+  if (d.kind === 'strategy') {
+    // "Long Continuation after Liquidity Sweep · 5m LONG — активна: вход 3,200, SL 3,180, TP1 3,240 · сила 72%"
+    const name = STRATEGY_BY_ID.get(d.strategy)?.name ?? d.strategy;
+    const strength = d.strength ?? d.score;
+    return `${name} · ${d.tf} ${d.dir} — ${t.stage[d.stage]}: ${t.entry} ${fmtPrice(d.entry)}, SL ${fmtPrice(d.sl)}, TP1 ${fmtPrice(d.tp1)} · ${t.strength} ${strength}%`;
+  }
   return d.checks.map((x) => describeCheck(t, x.condition, x.value)).join(` ${t.and} `);
 }
 

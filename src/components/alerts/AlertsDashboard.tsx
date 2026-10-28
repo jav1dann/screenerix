@@ -17,17 +17,22 @@ import { openAccount } from '@/lib/account/accountUi';
 import { alertsClient, markRead, refreshAlerts, removeLocal, upsertLocal } from '@/lib/alerts/client';
 import type { AlertView, EventView } from '@/lib/alerts/client';
 import { closeAlerts, openAlertWizard } from '@/lib/alerts/alertsUi';
-import { describeAlert, displayStatus, marketOfExchange, MAX_ACTIVE_ALERTS } from '@/lib/alerts/types';
-import type { AlertDisplayStatus } from '@/lib/alerts/types';
+import { ANY_COIN, describeAlert, displayStatus, marketOfExchange, MAX_ACTIVE_ALERTS } from '@/lib/alerts/types';
+import type { AlertDisplayStatus, AlertKind } from '@/lib/alerts/types';
 import { fmtDateTime } from '@/lib/format';
 import { ADAPTERS } from '@/lib/market/exchanges';
 import { openTelegramLink } from '@/lib/telegram/client';
 import { LANG_LABEL } from '@/lib/telegram/i18n';
 
 type Tab = 'all' | AlertDisplayStatus;
-type Filter = 'all' | 'price' | 'complex';
+type Filter = 'all' | AlertKind;
 const TABS: ReadonlyArray<{ id: Tab; label: string }> = [{ id: 'all', label: 'All' }, { id: 'active', label: 'Active' }, { id: 'paused', label: 'Paused' }, { id: 'triggered', label: 'Triggered' }];
-const FILTERS: ReadonlyArray<{ id: Filter; label: string }> = [{ id: 'all', label: 'All' }, { id: 'price', label: 'Price alert' }, { id: 'complex', label: 'Complex alert' }];
+const FILTERS: ReadonlyArray<{ id: Filter; label: string }> = [{ id: 'all', label: 'All' }, { id: 'price', label: 'Price alert' }, { id: 'complex', label: 'Complex alert' }, { id: 'strategy', label: 'Strategy alert' }];
+const KIND_BADGE: Record<AlertKind, { label: string; cls: string }> = {
+  price: { label: 'Price', cls: 'bg-sx-alert/15 text-sx-alert' },
+  complex: { label: 'Complex', cls: 'bg-[#7CB7FF]/15 text-[#7CB7FF]' },
+  strategy: { label: 'Strategy', cls: 'bg-[#B48CFF]/15 text-[#B48CFF]' },
+};
 const EMPTY_TEXT: Record<Tab, string> = {
   all: 'No alerts yet. Create one, or click a price on any chart.',
   active: 'No active alerts. Create one, or resume a paused one.',
@@ -201,15 +206,15 @@ export default function AlertsDashboard() {
                     <div className={`flex min-w-0 flex-col gap-1 ${status === 'paused' ? 'opacity-70' : ''}`}>
                       <span className="flex min-w-0 items-center gap-2">
                         <ExchangeIcon id={a.exchange} size={15} />
-                        <span className="font-bold">{a.symbol}</span>
+                        <span className="font-bold">{a.symbol === ANY_COIN ? 'Any coin' : a.symbol}</span>
                         <span className="text-[11px] text-sx-muted">{ADAPTERS[a.exchange].name} · {marketOfExchange(a.exchange) === 'futures' ? 'Futures' : 'Spot'}</span>
-                        <span className={`rounded px-1.5 py-px text-[10px] font-bold ${a.kind === 'price' ? 'bg-sx-alert/15 text-sx-alert' : 'bg-[#7CB7FF]/15 text-[#7CB7FF]'}`}>{a.kind === 'price' ? 'Price' : 'Complex'}</span>
+                        <span className={`rounded px-1.5 py-px text-[10px] font-bold ${KIND_BADGE[a.kind].cls}`}>{KIND_BADGE[a.kind].label}</span>
                         <span className={`ml-auto rounded-full px-2 py-px text-[10px] font-bold ${STATUS_STYLE[status].cls}`} data-alert-status={status}>{STATUS_STYLE[status].label}</span>
                       </span>
                       <span className="truncate text-[13px]" data-alert-text>{describeAlert(a)}</span>
                       <span className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-sx-muted">
                         <Channels a={a} />
-                        <span>{a.mode === 'once' ? 'One-time' : `Infinite · every ${a.repeatMinutes}m`}</span>
+                        <span>{a.mode === 'once' ? 'One-time' : a.kind === 'strategy' ? 'Every setup' : `Infinite · every ${a.repeatMinutes}m`}</span>
                         <span>Created {fmtDateTime(a.createdAt)}</span>
                         {a.triggerCount > 0 && <span data-trigger-count>Fired {a.triggerCount}× · last {a.lastTriggeredAt ? fmtDateTime(a.lastTriggeredAt) : '—'}</span>}
                       </span>

@@ -32,7 +32,8 @@ export function startAlertWorker(venue: ExchangeId, market: MarketWorker): Alert
 
   function pass(): void {
     const now = Date.now();
-    const mine = allAlerts().filter((a) => a.exchange === venue && a.status === 'active');
+    // Strategy alerts are matched by the strategy worker (strategyAlerts.ts), not by price.
+    const mine = allAlerts().filter((a) => a.exchange === venue && a.status === 'active' && a.kind !== 'strategy');
     active = mine.length;
     const access = new Map<string, boolean>();
     const allowed = (uid: string) => {

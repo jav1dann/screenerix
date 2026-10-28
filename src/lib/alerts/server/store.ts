@@ -75,6 +75,7 @@ export function saveAlert(userId: string, input: AlertInput, now = Date.now()): 
     symbol: input.symbol,
     ...(input.kind === 'price' && input.price ? { price: input.price } : {}),
     ...(input.kind === 'complex' && input.conditions ? { conditions: input.conditions } : {}),
+    ...(input.kind === 'strategy' && input.strategy ? { strategy: input.strategy } : {}),
     channels: input.channels,
     sound: input.sound,
     mode: input.mode,
@@ -128,9 +129,10 @@ export function removeAlert(userId: string, id: string): boolean {
 
 /**
  * Record a firing: the alert's trigger count / time (one-time alerts are archived) and the
- * event. Synchronous from read to write, so one alert never fires twice for one price pass.
+ * event (`symbol`: the coin it fired for — a strategy alert on any coin names the setup's).
+ * Synchronous from read to write, so one alert never fires twice for one price pass.
  */
-export function recordFire(alert: Alert, price: number, text: string, now = Date.now(), detail?: AlertDetail): { alert: Alert; event: AlertEvent } | null {
+export function recordFire(alert: Alert, price: number, text: string, now = Date.now(), detail?: AlertDetail, symbol = alert.symbol): { alert: Alert; event: AlertEvent } | null {
   const updated = patchAlert(alert.userId, alert.id, {
     lastTriggeredAt: now, triggerCount: alert.triggerCount + 1, updatedAt: now,
     ...(alert.mode === 'once' ? { status: 'archived' as const, archivedReason: 'fired' as const } : {}),
@@ -138,7 +140,7 @@ export function recordFire(alert: Alert, price: number, text: string, now = Date
   if (!updated) return null;
   const event: AlertEvent = {
     id: randomUUID(), alertId: alert.id, userId: alert.userId, at: now, kind: alert.kind, exchange: alert.exchange,
-    symbol: alert.symbol, price, text, sound: alert.sound, channels: alert.channels, ...(detail ? { detail } : {}),
+    symbol, price, text, sound: alert.sound, channels: alert.channels, ...(detail ? { detail } : {}),
   };
   const all = events.load();
   const mine = all.filter((e) => e.userId === alert.userId);

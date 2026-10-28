@@ -3,9 +3,12 @@
  * (types, labels, validation, descriptions — no storage here).
  */
 import { ADAPTERS, EXCHANGE_IDS } from '@/lib/market/exchanges';
-import type { ExchangeId } from '@/lib/market/exchanges';
+import type { ExchangeId, Timeframe } from '@/lib/market/exchanges';
+import { STRATEGIES, STRATEGY_BY_ID } from '@/lib/strategies/catalog';
+import { isStrategyId } from '@/lib/strategies/types';
+import type { Direction, Stage, StrategyId } from '@/lib/strategies/types';
 
-export type AlertKind = 'price' | 'complex';
+export type AlertKind = 'price' | 'complex' | 'strategy';
 export type AlertMode = 'once' | 'infinite';
 export type AlertSound = 'off' | 'beep' | 'voice';
 export type AlertStatus = 'active' | 'archived';
@@ -20,6 +23,25 @@ export interface Condition { metric: Metric; window: MetricWindow; op: Op; value
 
 export interface AlertChannels { browser: boolean; telegram: boolean; push: boolean }
 
+/** Strategy alerts: which setups to report, and when. */
+export interface StrategySpec {
+  /** One strategy, or every one. */
+  strategy: StrategyId | 'all';
+  /** Setup timeframe, or any. */
+  tf: Timeframe | 'any';
+  dir: Direction | 'any';
+  /** Minimum score / strength index (0–100; 0 = any). */
+  minScore: number;
+  /** `active`: when a setup triggers (entry); `new`: when it's first detected (forming or active). */
+  on: 'active' | 'new';
+}
+/** Strategy alerts' "any coin" symbol. */
+export const ANY_COIN = '*';
+/** Timeframes the strategy scanners run on. */
+export const STRATEGY_ALERT_TFS: readonly Timeframe[] = ['1m', '5m', '15m', '1h'];
+/** At most this many setups notified per alert and scan pass (a market-wide move shouldn't flood). */
+export const MAX_STRATEGY_FIRES_PER_PASS = 5;
+
 export interface Alert {
   id: string;
   userId: string;
@@ -31,6 +53,8 @@ export interface Alert {
   price?: { level: number; direction: 'above' | 'below' };
   /** Complex alerts: every condition must hold (AND). */
   conditions?: Condition[];
+  /** Strategy alerts (`symbol` may be ANY_COIN). */
+  strategy?: StrategySpec;
   channels: AlertChannels;
   sound: AlertSound;
   mode: AlertMode;
@@ -46,7 +70,7 @@ export interface Alert {
 }
 
 /** What the browser sends to create / edit an alert. */
-export type AlertInput = Pick<Alert, 'kind' | 'exchange' | 'symbol' | 'price' | 'conditions' | 'channels' | 'sound' | 'mode' | 'repeatMinutes' | 'note'> & { id?: string };
+export type AlertInput = Pick<Alert, 'kind' | 'exchange' | 'symbol' | 'price' | 'conditions' | 'strategy' | 'channels' | 'sound' | 'mode' | 'repeatMinutes' | 'note'> & { id?: string };
 
 /**
  * Outcome per chosen channel: Telegram `sent` / `failed` / `unlinked` (chosen but no chat linked);
@@ -58,6 +82,10 @@ export interface AlertDelivery { telegram?: 'sent' | 'failed' | 'unlinked'; push
 /** What triggered, structured so notifications can be worded in the user's language. */
 export type AlertDetail =
   | { kind: 'price'; direction: 'above' | 'below'; level: number }
+  | {
+    kind: 'strategy'; formationId: string; strategy: StrategyId; tf: Timeframe; dir: Direction; stage: Stage;
+    entry: number; sl: number; tp1: number; tp2: number; score: number; strength: number | null;
+  }
   | { kind: 'complex'; checks: Array<{ condition: Condition; value: number | null }> };
 
 /** One firing, kept for the "Recent triggers" list and pushed to open terminals. */
@@ -105,12 +133,12 @@ const finite = (v: unknown): v is number => typeof v === 'number' && Number.isFi
 /** A clean AlertInput, or the reason it's invalid. Symbol existence is checked by the server. */
 export function validateAlertInput(raw: unknown): { ok: true; input: AlertInput } | { ok: false; error: string } {
   if (!isObj(raw)) return { ok: false, error: 'Invalid alert.' };
-  const kind: AlertKind | null = raw.kind === 'complex' ? 'complex' : raw.kind === 'price' ? 'price' : null;
+  const kind: AlertKind | null = raw.kind === 'complex' || raw.kind === 'price' || raw.kind === 'strategy' ? raw.kind : null;
   if (!kind) return { ok: false, error: 'Choose an alert type.' };
   const exchange = typeof raw.exchange === 'string' && (EXCHANGE_IDS as readonly string[]).includes(raw.exchange) ? (raw.exchange as ExchangeId) : null;
   if (!exchange) return { ok: false, error: 'Choose an exchange.' };
   const symbol = typeof raw.symbol === 'string' ? raw.symbol.trim().toUpperCase() : '';
-  if (!/^[\p{Lu}\p{Lo}\p{N}]{1,20}$/u.test(symbol)) return { ok: false, error: 'Choose a coin.' };
+  if (!(kind === 'strategy' && symbol === ANY_COIN) && !/^[\p{Lu}\p{Lo}\p{N}]{1,20}$/u.test(symbol)) return { ok: false, error: 'Choose a coin.' };
   const ch = isObj(raw.channels) ? raw.channels : {};
   const channels: AlertChannels = { browser: ch.browser === true, telegram: ch.telegram === true, push: ch.push === true };
   const sound: AlertSound = raw.sound === 'beep' || raw.sound === 'voice' ? raw.sound : 'off';
@@ -120,6 +148,17 @@ export function validateAlertInput(raw: unknown): { ok: true; input: AlertInput 
   const note = typeof raw.note === 'string' ? raw.note.trim().slice(0, 140) : '';
   const base = { kind, exchange, symbol, channels, sound, mode, repeatMinutes: mode === 'infinite' ? repeat : 5, ...(note ? { note } : {}), ...(typeof raw.id === 'string' ? { id: raw.id } : {}) };
 
+  if (kind === 'strategy') {
+    const st = isObj(raw.strategy) ? raw.strategy : {};
+    const strategy = st.strategy === 'all' || isStrategyId(st.strategy) ? st.strategy : null;
+    if (!strategy) return { ok: false, error: 'Choose a strategy.' };
+    const tf = st.tf === 'any' || (STRATEGY_ALERT_TFS as readonly unknown[]).includes(st.tf) ? (st.tf as StrategySpec['tf']) : null;
+    if (!tf) return { ok: false, error: 'Choose a timeframe.' };
+    const dir = st.dir === 'LONG' || st.dir === 'SHORT' ? st.dir : 'any';
+    const minScore = finite(st.minScore) ? Math.round(Math.max(0, Math.min(100, st.minScore))) : 0;
+    const on = st.on === 'new' ? 'new' : 'active';
+    return { ok: true, input: { ...base, strategy: { strategy, tf, dir, minScore, on } } };
+  }
   if (kind === 'price') {
     const p = isObj(raw.price) ? raw.price : {};
     if (!finite(p.level) || !(p.level > 0)) return { ok: false, error: 'Enter a target price above 0.' };
@@ -160,8 +199,24 @@ export type AlertDisplayStatus = 'active' | 'paused' | 'triggered';
 export const displayStatus = (a: Pick<Alert, 'status' | 'archivedReason'>): AlertDisplayStatus =>
   a.status === 'active' ? 'active' : a.archivedReason === 'fired' ? 'triggered' : 'paused';
 
+/** "Long Continuation after Liquidity Sweep · 5m · long · strength ≥ 70 · when active". */
+export function describeStrategySpec(sp: StrategySpec): string {
+  const name = sp.strategy === 'all' ? 'Any strategy' : STRATEGY_BY_ID.get(sp.strategy)?.name ?? sp.strategy;
+  return [
+    name,
+    sp.tf === 'any' ? null : sp.tf,
+    sp.dir === 'any' ? null : sp.dir.toLowerCase(),
+    sp.minScore > 0 ? `strength ≥ ${sp.minScore}` : null,
+    sp.on === 'active' ? 'when active' : 'when detected',
+  ].filter(Boolean).join(' · ');
+}
+
+/** Strategies a strategy alert can name ("all" first). */
+export const STRATEGY_ALERT_OPTIONS: ReadonlyArray<{ id: StrategyId | 'all'; label: string }> = [{ id: 'all', label: 'Any strategy' }, ...STRATEGIES.map((x) => ({ id: x.id, label: x.name }))];
+
 /** One line for lists and notifications. */
-export function describeAlert(a: Pick<Alert, 'kind' | 'price' | 'conditions'>): string {
+export function describeAlert(a: Pick<Alert, 'kind' | 'price' | 'conditions' | 'strategy'>): string {
+  if (a.kind === 'strategy' && a.strategy) return describeStrategySpec(a.strategy);
   if (a.kind === 'price' && a.price) return `Price ${a.price.direction === 'above' ? 'rises to' : 'falls to'} ${num(a.price.level)}`;
   return (a.conditions ?? []).map(describeCondition).join(' AND ');
 }

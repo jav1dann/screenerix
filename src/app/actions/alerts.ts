@@ -10,7 +10,7 @@ import { headers } from 'next/headers';
 import { hasAccess } from '@/lib/auth/access';
 import { getCurrentUser } from '@/lib/auth/dal';
 import { activeCount, alertsOf, eventsOf, patchAlert, removeAlert, saveAlert as storeAlert, setAlertLevel } from '@/lib/alerts/server/store';
-import { MAX_ACTIVE_ALERTS, validateAlertInput } from '@/lib/alerts/types';
+import { ANY_COIN, MAX_ACTIVE_ALERTS, validateAlertInput } from '@/lib/alerts/types';
 import type { Alert, AlertEvent } from '@/lib/alerts/types';
 import { requireInstrument } from '@/lib/market/server/marketData';
 import { addSubscription, pushPublicKey, removeSubscription } from '@/lib/push/server';
@@ -102,7 +102,7 @@ async function save(raw: unknown, quick: boolean): Promise<AlertsResult<AlertVie
     if (activeCount(user.id) >= MAX_ACTIVE_ALERTS) return { ok: false, error: `You have ${MAX_ACTIVE_ALERTS} active alerts — pause or delete some first.` };
   }
   try {
-    await requireInstrument(input.exchange, input.symbol);
+    if (input.symbol !== ANY_COIN) await requireInstrument(input.exchange, input.symbol);
   } catch {
     return { ok: false, error: `${input.symbol} isn’t listed on this exchange.` };
   }

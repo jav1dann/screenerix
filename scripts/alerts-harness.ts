@@ -4,6 +4,9 @@
  *   alerts: startAlertWorker → rules → store (recordFire) → deliver → Telegram queue + web-push,
  *           worded in each account's language
  *   errors: flood control (429 → retry), dead chats (400 chat not found / 403 blocked → unlink)
+ *   strategy alerts: startStrategyWorker on synthetic candles (a continuation setup forming, then
+ *           triggering) → matching (strategy / coin or any / timeframe / direction / strength /
+ *           trigger) → Telegram + push in each language; dedupe, the per-pass cap, restarts
  * Only the exchange price feed is faked. Telegram goes to the mock Bot API and push to a local
  * HTTPS push service that decrypts every message. Run through `npm run test:alerts`
  * (scripts/test-alerts.mjs sets up the environment); exits 1 on any failed check.
@@ -14,11 +17,15 @@ import https from 'node:https';
 import type { AddressInfo } from 'node:net';
 import { createRequire } from 'node:module';
 import { eventsOf, findAlert, onUserAlerts, patchAlert, saveAlert } from '@/lib/alerts/server/store';
-import type { AlertInput } from '@/lib/alerts/types';
+import { changesBetween, matches, notifyStrategyAlerts } from '@/lib/alerts/server/strategyAlerts';
+import { ANY_COIN, MAX_STRATEGY_FIRES_PER_PASS, validateAlertInput } from '@/lib/alerts/types';
+import type { AlertInput, StrategySpec } from '@/lib/alerts/types';
 import { createUser, findById, setTelegram, updateUser } from '@/lib/auth/users';
 import { addSubscription } from '@/lib/push/server';
 import { startAlertWorker } from '@/lib/server/scan/alertWorker';
-import type { AlertCoin, MarketWorker } from '@/lib/server/scan/marketWorker';
+import type { AlertCoin, CoinSnapshot, MarketWorker } from '@/lib/server/scan/marketWorker';
+import { startStrategyWorker } from '@/lib/server/scan/strategyWorker';
+import type { Formation } from '@/lib/strategies/types';
 import { startLink, startTelegramBot } from '@/lib/telegram/bot';
 import { STRINGS } from '@/lib/telegram/i18n';
 
@@ -257,6 +264,115 @@ async function main(): Promise<void> {
   check('a failing chat doesn’t stop the others', (await sentTo(9001)).length === 4 && eventsOf(gone).length === 1);
 
   worker.stop();
+
+  await strategyChecks(user.id, amina, lapsed.id);
+}
+
+/* ── Strategy alerts ── */
+
+/** Quiet market, an impulse, then a range with equal lows at 103.6 (as in test:strategies), timed to end now. */
+type Ohlcv = [o: number, h: number, l: number, c: number];
+function rangeRows(): Ohlcv[] {
+  const rows: Ohlcv[] = [];
+  for (let i = 0; i < 30; i++) rows.push(i % 2 === 0 ? [99.9, 100.35, 99.75, 100.1] : [100.1, 100.25, 99.65, 99.9]);
+  rows.push([99.9, 101.3, 99.8, 101.2], [101.2, 102.6, 101.1, 102.5], [102.5, 104.0, 102.4, 103.9], [103.9, 105.3, 103.8, 105.2]);
+  rows.push([105.2, 105.25, 104.4, 104.5], [104.5, 104.9, 103.6, 103.8], [103.8, 104.6, 103.7, 104.4], [104.4, 104.7, 103.62, 103.9], [103.9, 104.5, 103.8, 104.3], [104.3, 104.6, 103.9, 104.2]);
+  return rows;
+}
+const LIVE: Ohlcv = [104.0, 104.2, 103.9, 104.1];
+const SWEPT: Ohlcv[] = [...rangeRows(), [104.0, 104.1, 103.0, 103.3]];
+/** Swept under the lows (setup FORMING), then closed back inside (ACTIVE). */
+const FORMING_ROWS: Ohlcv[] = [...SWEPT, LIVE];
+const ACTIVE_ROWS: Ohlcv[] = [...SWEPT, [103.3, 103.5, 102.8, 103.2], [103.2, 104.0, 103.1, 103.9], LIVE];
+const toCandles = (rows: readonly Ohlcv[]) => {
+  const end = Math.floor(Date.now() / 60_000) * 60_000;
+  return rows.map(([o, h, l, c], i) => ({ t: end - (rows.length - 1 - i) * 60_000, o, h, l, c, v: 100 }));
+};
+
+async function strategyChecks(uid: string, amina: string, lapsed: string): Promise<void> {
+  section('Strategy alerts');
+  const spec = (p: Partial<StrategySpec> = {}): StrategySpec => ({ strategy: 'longContinuationSweep', tf: 'any', dir: 'any', minScore: 0, on: 'active', ...p });
+  const raw = (symbol: string, p: Partial<StrategySpec> = {}, extra: object = {}) =>
+    ({ ...BASE, kind: 'strategy', symbol, strategy: spec(p), channels: NO_PUSH, mode: 'infinite', repeatMinutes: 5, ...extra });
+
+  const v = validateAlertInput(raw(ANY_COIN, { minScore: 250, dir: 'sideways' as never }));
+  check('validation: "any coin", strength clamped to 0–100, unknown direction → any', v.ok && v.input.symbol === ANY_COIN && v.input.strategy?.minScore === 100 && v.input.strategy?.dir === 'any');
+  check('validation: "any coin" only for strategy alerts', !validateAlertInput({ ...BASE, kind: 'price', symbol: ANY_COIN, price: { level: 1, direction: 'above' }, channels: NO_PUSH, mode: 'once' }).ok);
+  check('validation: unknown strategy / timeframe rejected', !validateAlertInput(raw('BTC', { strategy: 'nope' as never })).ok && !validateAlertInput(raw('BTC', { tf: '4h' })).ok);
+
+  const save = (u: string, symbol: string, p: Partial<StrategySpec> = {}, extra: object = {}) => {
+    const r = validateAlertInput(raw(symbol, p, extra));
+    if (!r.ok) throw new Error(r.error);
+    return saveAlert(u, r.input);
+  };
+  // Fires: the setup triggering on any coin (Telegram + push), and one-time on first detection.
+  const onActive = save(uid, ANY_COIN, { tf: '1m', minScore: 20 }, { channels: ALL });
+  const onNew = save(uid, 'TEST', { strategy: 'all', on: 'new' }, { mode: 'once' });
+  const ruAlert = save(amina, ANY_COIN, {}, { channels: ALL });
+  // Don't fire: too weak, wrong side / coin / timeframe / strategy, no plan.
+  const quiet = [
+    save(uid, ANY_COIN, { minScore: 40 }),
+    save(uid, ANY_COIN, { dir: 'SHORT' }),
+    save(uid, 'BTC', {}),
+    save(uid, ANY_COIN, { tf: '5m' }),
+    save(uid, ANY_COIN, { strategy: 'breakout' }),
+    save(lapsed, ANY_COIN, {}),
+  ];
+  check('a strategy alert stores its spec', findAlert(onActive.id)?.strategy?.tf === '1m' && findAlert(onActive.id)?.symbol === ANY_COIN);
+
+  // The strategy worker over a one-coin venue: first the sweep (FORMING), then the reclaim (ACTIVE).
+  let rows = FORMING_ROWS;
+  const snap = (): CoinSnapshot[] => [{ symbol: 'TEST', price: rows[rows.length - 1][3], volume: 5e7, k1m: toCandles(rows), k5m: null, k1h: null }];
+  const venue = { snapshot: snap, setHot: () => {} } as unknown as MarketWorker;
+  const before = eventsOf(uid).length;
+  const sentBefore = (await sentTo(9001)).length;
+  const pushesBefore = pushes.length;
+  const ofAlert = (u: string, id: string) => eventsOf(u, 500).filter((e) => e.alertId === id);
+  const worker = startStrategyWorker('binance', venue);
+
+  check('setup detected → the "when detected" alert fires', await waitFor(() => ofAlert(uid, onNew.id).length === 1, 6_000));
+  const detected = ofAlert(uid, onNew.id)[0];
+  check('…with the coin and the setup in the event', detected?.symbol === 'TEST' && detected.detail?.kind === 'strategy' && detected.detail.stage === 'FORMING' && detected.detail.strategy === 'longContinuationSweep', JSON.stringify(detected?.detail));
+  check('…one-time: archived after it', findAlert(onNew.id)?.status === 'archived' && findAlert(onNew.id)?.archivedReason === 'fired');
+  check('"when active" alerts wait while it’s only forming', ofAlert(uid, onActive.id).length === 0 && ofAlert(amina, ruAlert.id).length === 0);
+
+  rows = ACTIVE_ROWS;
+  check('setup triggers (ACTIVE) → "when active" alerts fire', await waitFor(() => ofAlert(uid, onActive.id).length === 1 && ofAlert(amina, ruAlert.id).length === 1, 20_000));
+  const act = ofAlert(uid, onActive.id)[0];
+  check('…the stored text names the strategy, levels and strength', /^Long Continuation.* · 1m LONG — active: entry 103\.9.*, SL .*, TP1 .* · strength \d+%$/.test(act?.text ?? ''), act?.text);
+  check('…infinite strategy alert stays active', findAlert(onActive.id)?.status === 'active');
+  check('filters hold: strength, direction, coin, timeframe, strategy and plan', quiet.every((a) => eventsOf(a.userId, 500).every((e) => e.alertId !== a.id)), quiet.map((a) => `${a.id.slice(0, 4)}:${eventsOf(a.userId, 500).filter((e) => e.alertId === a.id).length}`).join(' '));
+  check('open terminals get it (event emitted for the account)', eventsOf(uid).length === before + 2);
+
+  check('Telegram: delivered for the matching alerts', await waitFor(async () => (await sentTo(9001)).length >= sentBefore + 2, 8_000));
+  const tg = (await sentTo(9001)).slice(sentBefore).map((m) => m.text ?? '');
+  check('Telegram: English message with the coin, venue and levels', tg.some((t) => /^🔔 <b>TEST<\/b> · Binance Futures\nLong Continuation.* · 1m LONG — active: entry 103\.9.* · strength \d+%/.test(t)), tg.join(' | ').replace(/\n/g, ' ⏎ '));
+  check('Telegram: in Russian for the ru account', await waitFor(async () => /^🔔 <b>TEST<\/b> · Binance Фьючерсы\n.* · 1m LONG — активна: вход 103\.9.* · сила \d+%/.test((await sentTo(8001)).at(-1)?.text ?? '')), ((await sentTo(8001)).at(-1)?.text ?? '').replace(/\n/g, ' ⏎ '));
+  check('Push: sent with the coin as the title', await waitFor(() => pushes.slice(pushesBefore).some((p) => p.path === '/push/device-1' && p.payload.title === 'TEST · Binance Futures' && /active: entry/.test(String(p.payload.body)))), JSON.stringify(pushes.slice(pushesBefore).map((p) => p.payload)));
+  check('History: delivery recorded', await waitFor(() => ofAlert(uid, onActive.id)[0]?.delivery?.telegram === 'sent' && ofAlert(uid, onActive.id)[0]?.delivery?.push === 1), JSON.stringify(ofAlert(uid, onActive.id)[0]?.delivery));
+
+  await sleep(16_000); // one more pass on the same setup
+  check('the same setup isn’t reported twice', ofAlert(uid, onActive.id).length === 1 && ofAlert(amina, ruAlert.id).length === 1);
+  worker.stop();
+
+  // Pure parts: changes between passes (a restart seeds from the cache), the per-pass cap.
+  const f = (id: string, stage: Formation['stage'], extra: Partial<Formation> = {}): Formation => ({
+    id, strategy: 'longContinuationSweep', tf: '1m', dir: 'LONG', anchorT: 0, entry: 10, sl: 9, tp1: 11, tp2: 12, score: 50, orderFlow: false, dailyAligned: false, note: '',
+    venue: 'binance', symbol: 'TEST', stage, price: 10, potential: 20, quality: 'MID', volume24h: 1e7, detectedAt: 0, stageAt: 0, seenAt: 0, ...extra,
+  });
+  const ch = changesBetween(new Map([['a', 'FORMING'], ['b', 'ACTIVE']]), [f('a', 'ACTIVE'), f('b', 'ACTIVE'), f('c', 'FORMING')]);
+  check('changes: FORMING→ACTIVE is "activated", unseen ids are "new", unchanged ones nothing', ch.map((c) => `${c.formation.id}:${+c.isNew}${+c.activated}`).join() === 'a:01,c:10', ch.map((c) => `${c.formation.id}:${+c.isNew}${+c.activated}`).join());
+  check('changes: nothing after a restart seeded from the same formations', changesBetween(new Map([['a', 'ACTIVE']]), [f('a', 'ACTIVE')]).length === 0);
+  const alertLike = { kind: 'strategy' as const, symbol: ANY_COIN, strategy: spec({ minScore: 60 }) };
+  check('matching: strength index wins over score; invalidated / done setups never match', matches(alertLike, { formation: f('x', 'ACTIVE', { score: 90, strength: { value: 50, factors: [] } }), isNew: true, activated: true }) === false
+    && matches(alertLike, { formation: f('x', 'ACTIVE', { score: 30, strength: { value: 70, factors: [] } }), isNew: true, activated: true }) === true
+    && matches({ ...alertLike, strategy: spec({ on: 'new' }) }, { formation: f('x', 'INVALIDATED'), isNew: true, activated: false }) === false
+    && matches(alertLike, { formation: f('x', 'ACTIVE', { score: 90, doneAt: 1 }), isNew: true, activated: true }) === false);
+  const burst = Array.from({ length: 8 }, (_, i) => ({ formation: f(`burst${i}`, 'ACTIVE', { symbol: `C${i}` }), isNew: true, activated: true }));
+  const capped = save(uid, ANY_COIN, {});
+  const n = notifyStrategyAlerts('binance', burst);
+  check(`a market-wide burst is capped at ${MAX_STRATEGY_FIRES_PER_PASS} per alert and pass`, ofAlert(uid, capped.id).length === MAX_STRATEGY_FIRES_PER_PASS, `${ofAlert(uid, capped.id).length} events (${n} sent in total)`);
+  check('other venues’ alerts are left alone', notifyStrategyAlerts('bybit', burst) === 0);
 }
 
 main()

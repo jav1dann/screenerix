@@ -11,6 +11,7 @@ import type { CoinPass } from '@/lib/strategies/lifecycle';
 import type { Formation, StrategyCoverage } from '@/lib/strategies/types';
 import type { MarketWorker } from './marketWorker';
 import { STRATEGY_MIN_VOLUME } from './marketWorker';
+import { changesBetween, notifyStrategyAlerts } from '@/lib/alerts/server/strategyAlerts';
 import { scanStore, strategyKey } from './store';
 
 const PASS_MS = 15_000;
@@ -24,6 +25,8 @@ export function startStrategyWorker(venue: ExchangeId, market: MarketWorker): St
   const key = strategyKey(venue);
   // Tracked setups survive a restart (the cache is persisted).
   let formations: Formation[] = (store.get<StrategyEntryData>(key)?.data.formations ?? []).map((f) => ({ ...f, tf: tfOf(f) }));
+  /** Each tracked setup's stage after the last pass (strategy alerts fire on changes; seeded so a restart doesn't re-report). */
+  let stages = new Map(formations.map((f) => [f.id, f.stage]));
   let coverage: StrategyCoverage = { venue, scanned: 0, total: 0, updatedAt: 0 };
   let passMs = 0;
   let last = '';
@@ -42,6 +45,9 @@ export function startStrategyWorker(venue: ExchangeId, market: MarketWorker): St
     }
     const now = Date.now();
     formations = advance(venue, formations, passes, now);
+    // Strategy alerts: setups that just appeared / just became ACTIVE.
+    try { notifyStrategyAlerts(venue, changesBetween(stages, formations), now); } catch (e) { console.error(`[alerts] strategy alerts (${venue}) failed`, e); }
+    stages = new Map(formations.map((f) => [f.id, f.stage]));
     // Coins with a live 1m setup get their 1m candles every minute (accurate wicks for the sweep).
     const hot = new Set<string>();
     for (const p of passes) if (p.candidates.some((c) => c.tf === '1m')) hot.add(p.symbol);

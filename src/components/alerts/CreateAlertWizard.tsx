@@ -2,9 +2,10 @@
 
 /**
  * Create / edit an alert in three steps:
- *  1. Type — price alert or complex alert;
+ *  1. Type — price, complex or strategy alert;
  *  2. Exchange & delivery — exchange + market, sound, notification channels, mode;
- *  3. Coin & trigger — coin search, then the target price or the conditions.
+ *  3. Coin & trigger — coin search (any coin for strategy alerts), then the target price, the
+ *     conditions, or which strategy setups to report.
  */
 import { Bell, Check, ChevronLeft, MessageCircle, Monitor, Plus, Search, Smartphone, Trash2, Volume2, X } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore, useTransition } from 'react';
@@ -18,11 +19,12 @@ import { alertsClient, refreshAlerts, upsertLocal } from '@/lib/alerts/client';
 import { closeAlertWizard } from '@/lib/alerts/alertsUi';
 import type { WizardInit } from '@/lib/alerts/alertsUi';
 import { playSound } from '@/lib/alerts/notify';
-import { describeCondition, MAX_CONDITIONS, marketOfExchange, METRIC_BY_ID, METRICS, OPS, REPEAT_RANGE, validateAlertInput, WINDOWS_FOR } from '@/lib/alerts/types';
-import type { AlertKind, AlertMode, AlertSound, Condition, MarketType, Metric } from '@/lib/alerts/types';
+import { ANY_COIN, describeCondition, describeStrategySpec, MAX_CONDITIONS, marketOfExchange, METRIC_BY_ID, METRICS, OPS, REPEAT_RANGE, STRATEGY_ALERT_OPTIONS, STRATEGY_ALERT_TFS, validateAlertInput, WINDOWS_FOR } from '@/lib/alerts/types';
+import type { AlertKind, AlertMode, AlertSound, Condition, MarketType, Metric, StrategySpec } from '@/lib/alerts/types';
 import { fmtPct, fmtPrice, fmtUsd } from '@/lib/format';
 import { EXCHANGE_IDS } from '@/lib/market/exchanges';
 import type { ExchangeId } from '@/lib/market/exchanges';
+import { STRATEGY_BY_ID } from '@/lib/strategies/catalog';
 import { rankBy } from '@/lib/market/searchRank';
 import { getDirectory } from '@/lib/market/venueDirectory';
 import type { DirectoryEntry } from '@/lib/market/venueDirectory';
@@ -36,6 +38,13 @@ const MODES: ReadonlyArray<{ id: AlertMode; label: string }> = [{ id: 'once', la
 const TG_WAIT_MS = 2 * 60_000;
 
 const newCondition = (): Condition => ({ metric: 'change', window: '5m', op: '>', value: 3 });
+const NEW_SPEC: StrategySpec = { strategy: 'all', tf: 'any', dir: 'any', minScore: 0, on: 'active' };
+const DIRS: ReadonlyArray<{ id: StrategySpec['dir']; label: string }> = [{ id: 'any', label: 'Any' }, { id: 'LONG', label: 'Long' }, { id: 'SHORT', label: 'Short' }];
+/** Strength presets (the strategies' quality bands: MID from 40, HIGH from 70). */
+const STRENGTHS: ReadonlyArray<{ id: string; label: string }> = [{ id: '0', label: 'Any' }, { id: '40', label: 'MID ≥ 40' }, { id: '70', label: 'HIGH ≥ 70' }];
+const TRIGGERS: ReadonlyArray<{ id: StrategySpec['on']; label: string }> = [{ id: 'active', label: 'When active (entry)' }, { id: 'new', label: 'When detected' }];
+/** Timeframes a strategy alert can pick: the strategy's own, or every scanned one. */
+const tfsFor = (strategy: StrategySpec['strategy']) => (strategy === 'all' ? STRATEGY_ALERT_TFS : STRATEGY_BY_ID.get(strategy)?.tfs ?? STRATEGY_ALERT_TFS);
 
 function Section({ title, hint, children }: { title: string; hint?: string; children: ReactNode }) {
   return (
@@ -67,16 +76,19 @@ export default function CreateAlertWizard({ init }: { init: WizardInit }) {
   const startEx: ExchangeId = edit?.exchange ?? (init.mode === 'create' ? init.exchange : undefined) ?? 'binance';
 
   const [step, setStep] = useState(init.mode === 'create' && init.symbol ? 0 : 0);
-  const [kind, setKind] = useState<AlertKind>(edit?.kind ?? (init.mode === 'create' ? init.kind : undefined) ?? 'price');
+  const startKind: AlertKind = edit?.kind ?? (init.mode === 'create' ? init.kind : undefined) ?? 'price';
+  const [kind, setKind] = useState<AlertKind>(startKind);
   const [exchange, setExchange] = useState<ExchangeId>(startEx);
   const [market, setMarket] = useState<MarketType>(marketOfExchange(startEx));
   const [sound, setSound] = useState<AlertSound>(edit?.sound ?? 'beep');
   const [channels, setChannels] = useState(edit?.channels ?? { browser: true, telegram: false, push: false });
-  const [mode, setMode] = useState<AlertMode>(edit?.mode ?? 'once');
+  const [mode, setMode] = useState<AlertMode>(edit?.mode ?? (startKind === 'strategy' ? 'infinite' : 'once'));
   const [repeat, setRepeat] = useState(String(edit?.repeatMinutes ?? 5));
-  const [symbol, setSymbol] = useState(edit?.symbol ?? (init.mode === 'create' ? init.symbol : undefined) ?? '');
+  const [symbol, setSymbol] = useState(edit?.symbol ?? (init.mode === 'create' ? init.symbol : undefined) ?? (startKind === 'strategy' ? ANY_COIN : ''));
   const [level, setLevel] = useState(edit?.price ? String(edit.price.level) : init.mode === 'create' && init.price ? String(Number(init.price.toPrecision(8))) : '');
   const [conditions, setConditions] = useState<Condition[]>(edit?.conditions?.length ? edit.conditions : [newCondition()]);
+  const [spec, setSpec] = useState<StrategySpec>(edit?.strategy ?? NEW_SPEC);
+  const [minText, setMinText] = useState(String(edit?.strategy?.minScore ?? 0));
   const [query, setQuery] = useState('');
   const [dir, setDir] = useState<{ ex: ExchangeId; list: DirectoryEntry[] } | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -119,7 +131,22 @@ export default function CreateAlertWizard({ init }: { init: WizardInit }) {
     setMarket(m);
     if (marketOfExchange(exchange) !== m) { const first = EXCHANGE_IDS.find((id) => marketOfExchange(id) === m); if (first) { setExchange(first); setSymbol(''); } }
   };
-  const pickExchange = (id: ExchangeId) => { setExchange(id); setSymbol(''); };
+  const pickExchange = (id: ExchangeId) => { setExchange(id); setSymbol((v) => (v === ANY_COIN ? v : '')); };
+  const pickKind = (k: AlertKind) => {
+    setKind(k);
+    if (edit) return;
+    // Strategy alerts: every matching setup (each once), on any coin unless one was picked.
+    if (k === 'strategy') { setMode('infinite'); setSymbol((v) => v || ANY_COIN); }
+    else { setMode('once'); setSymbol((v) => (v === ANY_COIN ? '' : v)); }
+  };
+  const pickStrategy = (strategy: StrategySpec['strategy']) =>
+    setSpec((sp) => ({ ...sp, strategy, tf: sp.tf !== 'any' && !tfsFor(strategy).includes(sp.tf) ? 'any' : sp.tf }));
+  const setMin = (text: string) => {
+    setMinText(text);
+    const v = Number(text);
+    if (text !== '' && Number.isFinite(v)) setSpec((sp) => ({ ...sp, minScore: Math.round(Math.max(0, Math.min(100, v))) }));
+  };
+  const anyCoin = symbol === ANY_COIN;
 
   const price = coin?.price ?? null;
   const levelNum = Number(level);
@@ -127,18 +154,20 @@ export default function CreateAlertWizard({ init }: { init: WizardInit }) {
 
   const input = () => ({
     ...(edit ? { id: edit.id } : {}),
-    kind, exchange, symbol, sound, channels, mode, repeatMinutes: Number(repeat),
-    ...(kind === 'price' ? { price: { level: levelNum, direction } } : { conditions }),
+    kind, exchange, symbol, sound, channels, mode,
+    // Strategy alerts report each setup once: no repeat interval.
+    repeatMinutes: kind === 'strategy' ? 5 : Number(repeat),
+    ...(kind === 'price' ? { price: { level: levelNum, direction } } : kind === 'strategy' ? { strategy: spec } : { conditions }),
   });
 
   const next = () => {
     setError(null);
-    if (step === 1 && mode === 'infinite') {
+    if (step === 1 && mode === 'infinite' && kind !== 'strategy') {
       const r = Number(repeat);
       if (!(r >= REPEAT_RANGE.min && r <= REPEAT_RANGE.max)) { setError(`Repeat interval: ${REPEAT_RANGE.min}–${REPEAT_RANGE.max} minutes.`); return; }
     }
     setStep((x) => Math.min(2, x + 1));
-    if (step === 1) setTimeout(() => searchRef.current?.focus(), 50);
+    if (step === 1 && !anyCoin) setTimeout(() => searchRef.current?.focus(), 50);
   };
 
   const save = () => {
@@ -212,12 +241,13 @@ export default function CreateAlertWizard({ init }: { init: WizardInit }) {
         {notice && <div role="status" className="rounded-lg border border-solid border-sx-up/30 bg-sx-up/10 px-3 py-2 text-xs text-[#9BDDB9]">{notice}</div>}
 
         {step === 0 && (
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2" role="radiogroup" aria-label="Alert type">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3" role="radiogroup" aria-label="Alert type">
             {([
               ['price', 'Price alert', 'When the price reaches a level you set — up or down.'],
               ['complex', 'Complex alert', 'When conditions hold together: % move in a window, volume spike, funding, open-interest change, price.'],
+              ['strategy', 'Strategy alert', 'When a strategy setup becomes active (or is detected) — one strategy or all, one coin or any, with a minimum strength.'],
             ] as const).map(([id, title, text]) => (
-              <button key={id} type="button" role="radio" aria-checked={kind === id} data-kind={id} onClick={() => setKind(id)}
+              <button key={id} type="button" role="radio" aria-checked={kind === id} data-kind={id} onClick={() => pickKind(id)}
                 className={`${BTN_RESET} flex flex-col gap-1.5 rounded-xl border border-solid p-4 text-left transition-colors ${kind === id ? 'border-sx-up bg-sx-up/[0.08]' : 'border-sx-line2 bg-white/[0.02] hover:border-[#3A3E46]'}`}>
                 <span className="text-sm font-bold">{title}</span>
                 <span className="text-xs text-sx-muted">{text}</span>
@@ -251,10 +281,12 @@ export default function CreateAlertWizard({ init }: { init: WizardInit }) {
                 hint={push.configured ? 'Arrive even with Screenerix closed (this browser / device).' : 'Push isn’t configured on this server.'}
                 checked={channels.push} disabled={!push.configured} onChange={onPush} />
             </Section>
-            <Section title="Alert mode" hint={mode === 'once' ? 'Fires once, then moves to Triggered.' : 'Keeps firing while the condition holds, at most once per interval.'}>
+            <Section title="Alert mode" hint={kind === 'strategy'
+              ? (mode === 'once' ? 'Fires on the first matching setup, then moves to Triggered.' : 'Fires for every matching setup — each setup once.')
+              : (mode === 'once' ? 'Fires once, then moves to Triggered.' : 'Keeps firing while the condition holds, at most once per interval.')}>
               <div className="flex flex-wrap items-center gap-3">
                 <SegmentedGroup label="Alert mode" options={MODES} value={mode} onChange={setMode} />
-                {mode === 'infinite' && (
+                {mode === 'infinite' && kind !== 'strategy' && (
                   <label className="flex items-center gap-2 text-xs text-sx-muted">Repeat every
                     <input className={`${INPUT} w-20`} type="number" min={REPEAT_RANGE.min} max={REPEAT_RANGE.max} value={repeat} onChange={(e) => setRepeat(e.target.value)} aria-label="Repeat interval (minutes)" data-repeat />
                     min
@@ -267,8 +299,15 @@ export default function CreateAlertWizard({ init }: { init: WizardInit }) {
 
         {step === 2 && (
           <>
-            <Section title="Coin" hint={`On ${exchange === 'coinbase' ? 'Coinbase spot (USD)' : 'USDT perpetual futures'}.`}>
-              {symbol ? (
+            <Section title="Coin" hint={`On ${exchange === 'coinbase' ? 'Coinbase spot (USD)' : 'USDT perpetual futures'}.${kind === 'strategy' ? ' Strategy alerts can watch every coin the scanner covers.' : ''}`}>
+              {anyCoin ? (
+                <div className="flex items-center gap-3 rounded-xl border border-solid border-sx-up/40 bg-sx-up/[0.06] px-3 py-2.5" data-picked={ANY_COIN}>
+                  <ExchangeIcon id={exchange} size={16} />
+                  <span className="font-bold">Any coin</span>
+                  <span className="text-xs text-sx-muted">every coin the strategy scanner covers on this exchange</span>
+                  <button type="button" className={`${ICON_BTN} ml-auto`} aria-label="Pick one coin" onClick={() => { setSymbol(''); setTimeout(() => searchRef.current?.focus(), 30); }}><X size={14} /></button>
+                </div>
+              ) : symbol ? (
                 <div className="flex items-center gap-3 rounded-xl border border-solid border-sx-up/40 bg-sx-up/[0.06] px-3 py-2.5" data-picked={symbol}>
                   <ExchangeIcon id={exchange} size={16} />
                   <span className="font-bold">{symbol}</span>
@@ -277,6 +316,7 @@ export default function CreateAlertWizard({ init }: { init: WizardInit }) {
                 </div>
               ) : (
                 <div className="flex flex-col gap-2">
+                  {kind === 'strategy' && <button type="button" className={`${GHOST_BTN} self-start`} onClick={() => setSymbol(ANY_COIN)} data-any-coin>Any coin</button>}
                   <div className="relative">
                     <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-sx-muted" aria-hidden="true" />
                     <input ref={searchRef} className={`${INPUT} pl-8`} placeholder="Search coin, e.g. BTC" value={query} onChange={(e) => setQuery(e.target.value)} aria-label="Search coin" data-coin-search
@@ -299,7 +339,39 @@ export default function CreateAlertWizard({ init }: { init: WizardInit }) {
               )}
             </Section>
 
-            {kind === 'price' ? (
+            {kind === 'strategy' ? (
+              <Section title="Setup" hint="Which strategy setups to report. Strength is the setup’s strength index (its score when it has none), 0–100.">
+                <div className="flex flex-col gap-3" data-strategy-spec>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="w-24 text-xs text-sx-muted">Strategy</span>
+                    <DropdownSelect<StrategySpec['strategy']> label="Strategy" options={STRATEGY_ALERT_OPTIONS.map((o) => o.id)} value={spec.strategy} onChange={pickStrategy} render={(id) => STRATEGY_ALERT_OPTIONS.find((o) => o.id === id)?.label ?? id} />
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="w-24 text-xs text-sx-muted">Timeframe</span>
+                    <SegmentedGroup label="Timeframe" options={[{ id: 'any' as const, label: 'Any' }, ...tfsFor(spec.strategy).map((tf) => ({ id: tf, label: tf }))]} value={spec.tf} onChange={(tf) => setSpec((sp) => ({ ...sp, tf }))} padX="px-2.5" />
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="w-24 text-xs text-sx-muted">Direction</span>
+                    <SegmentedGroup label="Direction" options={DIRS} value={spec.dir} onChange={(d) => setSpec((sp) => ({ ...sp, dir: d }))} padX="px-2.5" />
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="w-24 text-xs text-sx-muted">Min strength</span>
+                    <SegmentedGroup label="Minimum strength" options={STRENGTHS} value={STRENGTHS.some((o) => o.id === String(spec.minScore)) ? String(spec.minScore) : ''} onChange={setMin} padX="px-2.5" />
+                    <label className="flex items-center gap-1.5 text-xs text-sx-muted">≥
+                      <input className={`${INPUT} w-20`} type="number" min={0} max={100} step={1} value={minText} onChange={(e) => setMin(e.target.value)} aria-label="Minimum strength (0–100)" data-min-strength />
+                    </label>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="w-24 text-xs text-sx-muted">Notify</span>
+                    <SegmentedGroup label="Notify when" options={TRIGGERS} value={spec.on} onChange={(on) => setSpec((sp) => ({ ...sp, on }))} padX="px-2.5" />
+                  </div>
+                </div>
+                <p className="m-0 text-xs text-sx-muted" data-strategy-preview>
+                  Fires for {anyCoin ? 'any coin' : symbol || 'the coin'}: <b className="text-sx-text">{describeStrategySpec(spec)}</b>.
+                  {spec.on === 'new' ? ' Setups are reported as soon as they’re detected (forming or active).' : ' Setups are reported when price triggers the entry.'}
+                </p>
+              </Section>
+            ) : kind === 'price' ? (
               <Section title="Target price">
                 <input className={`${INPUT} max-w-xs`} type="number" min={0} step="any" inputMode="decimal" placeholder={price ? fmtPrice(price) : 'Price'} value={level} onChange={(e) => setLevel(e.target.value)} aria-label="Target price" data-target-price />
                 {symbol && levelNum > 0 && (
