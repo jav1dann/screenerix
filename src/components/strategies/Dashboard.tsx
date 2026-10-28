@@ -15,7 +15,12 @@ import type { StrategiesState, TableField, Workspace } from '@/lib/strategies/st
 import { STAGES } from '@/lib/strategies/types';
 import type { Formation, Quality, Stage } from '@/lib/strategies/types';
 import { openPool, openWorkspaceSettings, selectStrategyTab } from '@/lib/strategies/ui';
+import { ANY_COIN } from '@/lib/alerts/types';
 import { CARDS_TABLE, FormationCard, FormationTable, ViewSwitch } from './parts';
+import StrategyAlertButton from './StrategyAlertButton';
+
+/** A strategy's one-click alert: its setups on any coin, any timeframe and side. */
+const anyCoin = (ws: Workspace) => ({ exchange: ws.venue, symbol: ANY_COIN, strategy: ws.strategy, tf: 'any' as const, dir: 'any' as const });
 
 const MAX_FEED_CARDS = 120;
 const MAX_FEED_ROWS = 300;
@@ -146,6 +151,7 @@ function StrategyCard({ ws, counts, matching }: { ws: Workspace; counts: Record<
           <span className="flex min-w-0 items-center gap-1 truncate text-[11px] text-sx-muted"><ExchangeIcon id={ws.venue} size={11} />{ADAPTERS[ws.venue].name} · {tfLabel(def)} · {matching} matching</span>
         </span>
         <Switch ws={ws} />
+        <StrategyAlertButton target={anyCoin(ws)} />
         <button type="button" className={ICON_BTN} onClick={(e) => { e.stopPropagation(); openWorkspaceSettings(ws.uid); }} aria-label={`${ws.name} settings`} title="Settings">
           <SettingsIcon size={14} aria-hidden="true" />
         </button>
@@ -186,7 +192,10 @@ function StrategyTable({ workspaces, feed, now, exceptions }: { workspaces: read
                 {STAGES.map((s) => <td key={s} className="border-0 border-b border-solid border-sx-line/60 px-3 py-1.5 font-bold" style={{ color: STAGE_META[s].color }} data-count={s}>{counts[s]}</td>)}
                 <td className="border-0 border-b border-solid border-sx-line/60 px-3 py-1.5 text-sx-text">{workspaceFormations(ws, feed.formations, now, exceptions).length}</td>
                 <td className="border-0 border-b border-solid border-sx-line/60 px-3 py-1.5">
-                  <button type="button" className={ICON_BTN} onClick={() => openWorkspaceSettings(ws.uid)} aria-label={`${ws.name} settings`} title="Settings"><SettingsIcon size={14} aria-hidden="true" /></button>
+                  <span className="flex items-center gap-1">
+                    <StrategyAlertButton target={anyCoin(ws)} />
+                    <button type="button" className={ICON_BTN} onClick={() => openWorkspaceSettings(ws.uid)} aria-label={`${ws.name} settings`} title="Settings"><SettingsIcon size={14} aria-hidden="true" /></button>
+                  </span>
                 </td>
               </tr>
             );

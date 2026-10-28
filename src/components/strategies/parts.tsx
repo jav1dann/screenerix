@@ -17,6 +17,10 @@ import type { TableField, WorkspaceSettings } from '@/lib/strategies/store';
 import type { Timeframe } from '@/lib/market/exchanges';
 import { distanceBps, qualityOf } from '@/lib/strategies/types';
 import type { Direction, Formation, Quality, Stage } from '@/lib/strategies/types';
+import StrategyAlertButton from './StrategyAlertButton';
+
+/** A setup's one-click alert target: its strategy, coin, timeframe and side. */
+const alertTarget = (f: Formation) => ({ exchange: f.venue, symbol: f.symbol, strategy: f.strategy, tf: f.tf, dir: f.dir });
 
 export const QUALITY_COLOR: Record<Quality, string> = { LOW: '#8B8D98', MID: '#E5B931', HIGH: '#30A46C' };
 
@@ -154,6 +158,7 @@ export const FormationCard = memo(function FormationCard({ f, now, onOpen, actio
         {isMultiTf(def) && <TfChip tf={f.tf} />}
         <DirPill dir={f.dir} />
         <span className="ml-auto" />
+        <StrategyAlertButton target={alertTarget(f)} forming={f.stage === 'FORMING'} />
         <StageBadge stage={f.stage} />
       </header>
       <div className="flex items-center gap-1.5 text-sx-muted">
@@ -210,6 +215,7 @@ export function FormationTable({ rows, fields, now, onOpen, label }: { rows: rea
         <thead>
           <tr className="text-left text-[10px] uppercase tracking-wide text-sx-muted">
             {cols.map((c) => <th key={c.id} scope="col" title={c.hint} className="whitespace-nowrap border-0 border-b border-solid border-sx-line px-3 py-2 font-semibold">{c.label}</th>)}
+            <th scope="col" className="w-8 border-0 border-b border-solid border-sx-line px-2 py-2 font-semibold"><span className="sr-only">Alert</span></th>
           </tr>
         </thead>
         <tbody>
@@ -222,6 +228,7 @@ export function FormationTable({ rows, fields, now, onOpen, label }: { rows: rea
                     : cell(f, c.id, now)}
                 </td>
               ))}
+              <td className="border-0 border-b border-solid border-sx-line/60 px-2 py-1"><StrategyAlertButton target={alertTarget(f)} forming={f.stage === 'FORMING'} /></td>
             </tr>
           ))}
         </tbody>
