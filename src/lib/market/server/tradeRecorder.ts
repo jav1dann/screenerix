@@ -100,11 +100,14 @@ export function startTradeRecorder(venue: ExchangeId, resolve: (base: string) =>
     }),
   };
   recorders.set(venue, r);
+  // Background passes never throw out (an unhandled rejection on the server).
   const refreshTop = async () => {
-    const want = topCoins().slice(0, topCount);
-    r.top = want;
-    for (const base of want) await add(venue, r, base, 0);
-    sync(r, venue);
+    try {
+      const want = topCoins().slice(0, topCount);
+      r.top = want;
+      for (const base of want) await add(venue, r, base, 0);
+      sync(r, venue);
+    } catch (e) { console.error(`[recorder] ${venue}: top coins refresh failed:`, e); }
   };
   // First pass once the market worker has its first ticker snapshot, then every few minutes.
   const first = setTimeout(() => { void refreshTop(); }, TOP_FIRST_MS);
@@ -136,7 +139,9 @@ async function add(venue: ExchangeId, r: VenueRecorder, base: string, requestedU
 export function trackTrades(venue: ExchangeId, base: string, now = Date.now()): void {
   const r = recorders.get(venue);
   if (!r) return;
-  void add(venue, r, base, now + REQUESTED_TTL_MS).then((s) => { if (s) sync(r, venue, now); });
+  void add(venue, r, base, now + REQUESTED_TTL_MS)
+    .then((s) => { if (s) sync(r, venue, now); })
+    .catch((e) => console.error(`[recorder] ${venue}: tracking ${base} failed:`, e));
 }
 
 /**

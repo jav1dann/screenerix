@@ -15,6 +15,7 @@ import type { Ranked } from '@/lib/screener/slots';
 import { sortLabel } from '@/lib/settings/settings';
 import type { SortPref } from '@/lib/settings/settings';
 import { h3, sectionTitle } from '../styles';
+import SafeBoundary from '@/components/shared/SafeBoundary';
 
 interface MarketMapProps {
   market: Asset[];
@@ -147,7 +148,10 @@ export default function MarketMap({ market, exchange, sort, metrics, tf, grid, s
               onPointerEnter={() => hold(a.symbol, 'hover', true)}
               onPointerLeave={() => hold(a.symbol, 'hover', false)}
             >
-              <Chart symbol={a.symbol} exchange={exchange} interval={tf} sort={sort} metrics={metrics.get(a.symbol)} funding={a.funding} height="100%" onHoldChange={(on) => hold(a.symbol, 'open', on)} />
+              {/* One failing chart shows its error in its own cell; the rest of the map keeps running. */}
+              <SafeBoundary name={`${a.symbol} chart`} compact>
+                <Chart symbol={a.symbol} exchange={exchange} interval={tf} sort={sort} metrics={metrics.get(a.symbol)} funding={a.funding} height="100%" onHoldChange={(on) => hold(a.symbol, 'open', on)} />
+              </SafeBoundary>
             </div>
           );
           return lazy ? <LazyCell key={`${exchange}:${a.symbol}`}>{card}</LazyCell> : card;

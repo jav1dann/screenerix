@@ -16,6 +16,7 @@ import type { MarketType } from '@/lib/alerts/alertStore';
 import type { ChartTimeframe, ExchangeId } from '@/lib/market/exchanges';
 import type { TradeLevels } from '@/lib/strategies/chartLines';
 import ChartWorkspace from './ChartWorkspace';
+import SafeBoundary from '@/components/shared/SafeBoundary';
 
 export interface ExpandedChartModalProps {
   symbol: string;
@@ -43,7 +44,12 @@ export default function ExpandedChartModal({ onClose, ...chart }: ExpandedChartM
   return createPortal(
     <div className="fixed inset-0 z-[110] text-sx-text [&_*]:box-border" style={{ fontFamily: 'var(--font-archivo), system-ui, sans-serif' }}>
       <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" aria-hidden="true" onClick={onClose} />
-      <ChartWorkspace {...chart} onClose={onClose} modal />
+      {/* A failure shows its error with Close (the backdrop closes it too). */}
+      <div className="pointer-events-none absolute inset-0 grid place-items-center p-6 [&>*]:pointer-events-auto">
+        <SafeBoundary name={`${chart.symbol} chart`} onClose={onClose}>
+          <ChartWorkspace {...chart} onClose={onClose} modal />
+        </SafeBoundary>
+      </div>
     </div>,
     document.body,
   );

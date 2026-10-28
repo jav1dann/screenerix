@@ -13,6 +13,7 @@ import { CARD_TIMEFRAMES } from '@/lib/market/terminalPrefs';
 import { indicatorUi, openIndicators } from '@/lib/indicators/ui';
 import ChartCanvas from '../ChartCanvas';
 import { BTN_RESET, ICON_BTN } from '../styles';
+import SafeBoundary from '@/components/shared/SafeBoundary';
 
 interface RatioChartModalProps {
   a: string;
@@ -66,7 +67,9 @@ export default function RatioChartModal({ a, b, exchange, initialInterval = '1m'
         </div>
         <div className="relative min-h-0 flex-1">
           <div className="absolute inset-0">
-            <ChartCanvas stream={stream} symbol={label} scope="chart" win={null} lines={[]} onPick={noop} onEdit={noop} onDelete={noop} />
+            <SafeBoundary name={`${label} chart`} compact>
+              <ChartCanvas stream={stream} symbol={label} scope="chart" win={null} lines={[]} onPick={noop} onEdit={noop} onDelete={noop} />
+            </SafeBoundary>
           </div>
           {snap.status !== 'ready' && (
             <div className="pointer-events-none absolute inset-0 grid place-items-center text-sm text-sx-muted">

@@ -23,7 +23,7 @@ import StrategyTabs from '@/components/strategies/StrategyTabs';
 import { useSettings, useSymbolList, useTerminalPrefs } from '@/hooks/useTerminal';
 import type { MarketType } from '@/lib/alerts/alertStore';
 
-import { DEFAULT_COMPARE, HEADER_CONTROLS_H, HEADER_TOP_H } from '@/lib/market/constants';
+import { DEFAULT_COMPARE, HEADER_CONTROLS_H, HEADER_TOP_H, TABS } from '@/lib/market/constants';
 import { ADAPTERS, EXCHANGE_IDS } from '@/lib/market/exchanges';
 import { toRow } from '@/lib/market/simulation';
 import type { ExchangeId, SortDir, SortKey, TabId, TickerRow } from '@/lib/market/types';
@@ -50,6 +50,7 @@ import TickerSearchModal from './TickerSearchModal';
 import type { SearchPick } from './TickerSearchModal';
 import TickerSidebar from './TickerSidebar';
 import type { SessionUser } from '@/lib/auth/access';
+import SafeBoundary from '@/components/shared/SafeBoundary';
 
 export interface TerminalProps {
   /** The signed-in account (profile menu, role badge). */
@@ -286,6 +287,8 @@ export default function Terminal({ user, onExit, defaultSidebarOpen = true }: Te
 
       <div style={{ display: 'flex', alignItems: 'flex-start' }}>
         <main style={{ flex: '1 1 auto', minWidth: 0, padding: 12 }}>
+          {/* A failing module shows its error with "Try again" instead of taking the terminal down (switching tabs clears it). */}
+          <SafeBoundary key={tab} name={TABS.find((t) => t.id === tab)?.label ?? 'This view'}>
           {tab === 'map' && (
             <MarketMap
               key={primary}
@@ -333,9 +336,10 @@ export default function Terminal({ user, onExit, defaultSidebarOpen = true }: Te
               getQuote={feed.getQuote}
             />
           )}
+          </SafeBoundary>
         </main>
         {/* The ticker table is a Market Review tool (right side); other views use the full width. */}
-        {tab === 'review' && <TickerSidebar
+        {tab === 'review' && <SafeBoundary name="Ticker list"><TickerSidebar
           open={sidebarOpen}
           onToggle={() => setSidebarOpen((o) => !o)}
           rows={rows}
@@ -366,7 +370,7 @@ export default function Terminal({ user, onExit, defaultSidebarOpen = true }: Te
               onApply: () => showFilterVenue(activeFilter),
             },
           }}
-        />}
+        /></SafeBoundary>}
       </div>
 
       {searchOpen && (

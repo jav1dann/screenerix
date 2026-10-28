@@ -105,15 +105,16 @@ class SharedSocket {
       if (ws !== this.ws) return;
       this.lastMessage = Date.now();
       if (typeof e.data !== 'string') return;
-      const events = this.adapter.ws.parse(e.data);
-      if (events.length) this.channels.forEach((c) => c.handlers.onEvents(events));
+      let events: FeedEvent[] = [];
+      safely('parse', () => { events = this.adapter.ws.parse(e.data as string); });
+      if (events.length) this.channels.forEach((c) => safely('events', () => c.handlers.onEvents(events)));
     };
     ws.onclose = (e: CloseEvent) => {
       if (ws !== this.ws) return;
       this.drop();
       // Only a socket that was open can have left a gap: a failed attempt changes nothing, and
       // resetting on each one made every chart re-download its history at every reconnect try.
-      if (opened) this.channels.forEach((c) => c.handlers.onReset?.());
+      if (opened) this.channels.forEach((c) => safely('reset', () => c.handlers.onReset?.()));
       if (!this.desired.size) { this.setState('idle'); return; }
       this.error = e.reason || `Disconnected (code ${e.code})`;
       this.scheduleReconnect();
@@ -193,11 +194,20 @@ class SharedSocket {
     if (this.state === state && this.error === error) return;
     this.state = state;
     this.error = error;
-    this.channels.forEach((c) => c.handlers.onChange?.());
+    this.channels.forEach((c) => safely('change', () => c.handlers.onChange?.()));
   }
 }
 
 const sockets = new Map<string, SharedSocket>();
+
+/**
+ * Run one channel's handler: a throwing listener must not escape the socket event — on the
+ * server (the trade recorder runs this hub in Node) that is an uncaught exception, and it would
+ * also skip the other channels.
+ */
+function safely(what: string, run: () => void): void {
+  try { run(); } catch (e) { console.error(`[socket] ${what} handler failed:`, e); }
+}
 
 /** Open a channel on `url` (one shared socket per URL). */
 export function openChannel(adapter: ExchangeAdapter, url: string, handlers: ChannelHandlers): SocketChannel {
