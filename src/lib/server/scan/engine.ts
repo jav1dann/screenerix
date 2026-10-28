@@ -14,6 +14,8 @@ import { limiter } from './limiter';
 import { startMarketWorker } from './marketWorker';
 import type { MarketWorker } from './marketWorker';
 import { scanStore } from './store';
+import { lookupInstrument } from '@/lib/market/server/marketData';
+import { startTradeRecorder } from '@/lib/market/server/tradeRecorder';
 import { startAlertWorker } from './alertWorker';
 import type { AlertWorker } from './alertWorker';
 import { startStrategyWorker } from './strategyWorker';
@@ -47,6 +49,10 @@ async function boot(): Promise<Engine> {
   for (const [venue, w] of markets) strategies.set(venue, startStrategyWorker(venue, w));
   const alerts = new Map<ExchangeId, AlertWorker>();
   for (const [venue, w] of markets) alerts.set(venue, startAlertWorker(venue, w));
+  // 30s / 1s history on venues without sub-minute candles: record the most traded coins' trades.
+  for (const [venue, w] of markets) {
+    startTradeRecorder(venue, (base) => lookupInstrument(venue, base), () => w.snapshot(0).sort((a, b) => b.volume - a.volume).map((c) => c.symbol));
+  }
   const persist = setInterval(() => { void store.persist().catch(() => {}); }, PERSIST_MS);
   persist.unref?.();
   const startedAt = Date.now();

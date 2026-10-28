@@ -7,6 +7,7 @@ import { ADAPTERS, KLINE_TIMEFRAMES, TIMEFRAME_MS } from '@/lib/market/exchanges
 import type { ExchangeId, FeedEvent, InstrumentMeta, OiPoint, RawCandle, RawTrade, SubMinute, Timeframe } from '@/lib/market/exchanges';
 import { aggregate, candlesFromTrades, trimPartialHead } from '@/lib/market/exchanges/shared';
 import { limiter, RateLimitedError } from '@/lib/server/scan/limiter';
+import { recordedCandles, recordsTrades, trackTrades } from './tradeRecorder';
 
 export class UpstreamError extends Error {
   constructor(message: string, readonly status = 502) { super(message); }
@@ -166,16 +167,16 @@ export interface SubMinutePage { candles: RawCandle[]; asOf: number; cursor: str
  * back from the oldest kept trade (`anchor`), keeping only trades before `start` (the oldest kept
  * bucket's open — earlier trades re-fetched from its second are already in the newer page).
  */
-type Cursor = { kind: 'n'; before: number } | { kind: 't'; start: number; anchor: RawTrade };
+type Cursor = { kind: 'n'; before: number } | { kind: 't'; start: number; anchor: RawTrade } | { kind: 'r'; before: number };
 
 function encodeCursor(c: Cursor): string {
-  return c.kind === 'n' ? `n.${c.before}` : `t.${c.start}.${c.anchor.t}.${encodeURIComponent(c.anchor.id ?? '')}`;
+  return c.kind === 'n' || c.kind === 'r' ? `${c.kind}.${c.before}` : `t.${c.start}.${c.anchor.t}.${encodeURIComponent(c.anchor.id ?? '')}`;
 }
 
 export function parseCursor(s: string | null | undefined): Cursor | null {
   if (!s || s.length > 200) return null;
   const [kind, a, b, id] = s.split('.');
-  if (kind === 'n' && Number.isFinite(Number(a)) && Number(a) > 0) return { kind: 'n', before: Number(a) };
+  if ((kind === 'n' || kind === 'r') && Number.isFinite(Number(a)) && Number(a) > 0) return { kind, before: Number(a) };
   if (kind === 't' && Number(a) > 0 && Number(b) > 0 && id) return { kind: 't', start: Number(a), anchor: { t: Number(b), price: 0, size: 0, id: decodeURIComponent(id) } };
   return null;
 }
@@ -183,13 +184,16 @@ export function parseCursor(s: string | null | undefined): Cursor | null {
 /**
  * 1s / 30s history: the venue's own sub-minute candles where it has them (Gate 30s, OKX 1s —
  * 30s is aggregated from 1s), otherwise built from trades, paging back where the venue allows
- * (Binance, Bitget, Gate, Coinbase; Bybit and OKX trades: the latest page only).
+ * (Binance, Bitget, Gate, Coinbase; Bybit and OKX trades: the latest page only). On venues
+ * without sub-minute candles the server also records them from the trade stream
+ * (tradeRecorder): those come before the trades page, and scroll back first.
  * Only complete buckets are returned (a first bucket the data started inside is dropped), and
  * `cursor` (passed back as `cursor`) loads the page before them — sub-minute charts scroll back.
  * `asOf`: trades after this time are not in the candles (the live stream adds them).
  */
 export function getSubMinuteCandles(id: ExchangeId, base: string, tf: SubMinute, cursor: string | null = null): Promise<SubMinutePage> {
   // Charts opening the same series together share one load (paged trades cost real rate-limit weight).
+  if (recordsTrades(id)) trackTrades(id, base);
   const key = `${id}|${base}|${tf}|${cursor ?? ''}`;
   const hit = subMinuteCache.get(key);
   if (hit && Date.now() - hit.at < SUB_MINUTE_CACHE_MS) return hit.p;
@@ -235,6 +239,13 @@ async function loadSubMinute(id: ExchangeId, base: string, tf: SubMinute, cursor
     return { candles, asOf, cursor: candles.length ? encodeCursor({ kind: 'n', before: candles[0].t }) : null };
   }
 
+  // Recorded buckets before the cursor (scrolling back through the server's recording).
+  if (cursor?.kind === 'r') {
+    const candles = recordedCandles(id, base, tf, cursor.before, bars);
+    const first = candles[0];
+    return { candles, asOf: Date.now(), cursor: first && recordedCandles(id, base, tf, first.t, 1).length ? encodeCursor({ kind: 'r', before: first.t }) : null };
+  }
+
   // Trades: the newest page (first load) or the pages before the cursor, oldest first.
   const older = cursor?.kind === 't' ? cursor : null;
   let trades = older ? [] : rest.parseTrades(await upstreamJson(rest.tradesUrl(meta)));
@@ -259,12 +270,22 @@ async function loadSubMinute(id: ExchangeId, base: string, tf: SubMinute, cursor
   // Trades start inside the oldest bucket, so it is partial — unless the venue's history ends there.
   // (A lone bucket is kept: a market so busy that every page fits in one bucket shows it partial.)
   const keepHead = (exhausted && older) || built.length < 2;
-  const candles = (keepHead ? built : built.slice(1)).slice(-bars);
+  const fromTrades = (keepHead ? built : built.slice(1)).slice(-bars);
+  const asOf = older ? Date.now() : scaled[scaled.length - 1]?.t ?? Date.now();
+  // First load: the server's recording fills in before the trades page (the page is exact for the
+  // recent minutes; the recording reaches back hours). Scrolling back continues in the recording.
+  const recorded = older ? [] : recordedCandles(id, base, tf, fromTrades[0]?.t ?? Infinity);
+  if (recorded.length) {
+    const candles = [...recorded, ...fromTrades].slice(-bars);
+    const head = candles[0];
+    return { candles, asOf, cursor: recordedCandles(id, base, tf, head.t, 1).length ? encodeCursor({ kind: 'r', before: head.t }) : null };
+  }
+  const candles = fromTrades;
   const first = candles[0];
   const anchor = first ? trades.find((t) => t.t >= first.t) : undefined;
   return {
     candles,
-    asOf: older ? Date.now() : scaled[scaled.length - 1]?.t ?? Date.now(),
+    asOf,
     cursor: first && anchor && rest.olderTradesUrl && !exhausted ? encodeCursor({ kind: 't', start: first.t, anchor }) : null,
   };
 }

@@ -54,6 +54,13 @@ Expected on start:
 | `NEXT_PUBLIC_TELEGRAM_BOT_USERNAME is @A, but TELEGRAM_BOT_TOKEN belongs to @B` | Variable names another bot | Fix the variable, **rebuild** (links already use @B meanwhile) |
 | `NEXT_PUBLIC_TELEGRAM_BOT_USERNAME "…" isn't a valid bot username — ignored` | Typo | Fix it, rebuild |
 | `another process is polling this bot token` (repeating) | Two servers on one token (or a dev machine) | Stop the other one |
+
+**30s / 1s history.** Binance, Bybit, Bitget and Coinbase publish no sub-minute candles, and their
+trade history reaches back only minutes on a busy coin. The server records 30s / 1s candles from
+their trade streams — the 20 most traded coins per exchange, plus any coin opened on a 30s / 1s
+chart (kept for 6 h) — up to 6 h of 30s and 15 min of 1s. The recording is in memory: after a
+restart it builds up again (a coin opened right after a restart shows a few minutes at first).
+OKX and Gate have their own sub-minute candles and aren't recorded.
 | `getMe failed (…) — will keep trying` / `polling: fetch failed` | No route to `api.telegram.org` | Check outbound HTTPS / firewall |
 
 ## 4. Live Telegram alert flow — sanity check (≈ 5 minutes)
@@ -73,13 +80,15 @@ Expected on start:
    a system notification; Recent triggers shows "Push · 1 device".
 5. **Bot commands.** `/language` re-asks; `/stop` disconnects (Account settings shows "Not connected"
    after a reload); `/start` again shows how to reconnect.
-6. **Chart alerts.** Click above / below the price on any chart → **Save** on the line → it appears in
-   **Alerts** (Active) and is delivered like step 3. Drag the line: the price label follows the
+6. **Chart alerts.** Click above / below the price on any chart — Market Map cards, the expanded
+   chart and Market Review alike → **Save** on the line → it appears in **Alerts** (Active), is drawn
+   on every chart of that coin, and is delivered like step 3. Drag the line: the price label follows the
    pointer and the new level is saved on release (the alert re-arms).
 7. **Strategy alert.** **Create alert → Strategy alert** → Any coin, Any strategy, Min strength Any,
    *When detected* → save. When the Strategies tab lists a new setup on that exchange, Telegram gets
    "🔔 **COIN** · … — forming: entry …, SL …, TP1 … · strength …%". Narrow it (one strategy, 1m,
-   HIGH ≥ 70, *When active*) for day-to-day use.
+   HIGH ≥ 70, *When active*) for day-to-day use. Quicker: the 🔔 on a setup (Strategies feed) alerts
+   on that strategy / coin / timeframe / side; the 🔔 on a strategy card, on any coin.
 8. **Failure path.** Block the bot in Telegram, fire another alert → Recent triggers shows
    "Telegram failed", the account is unlinked, and other users' alerts keep arriving.
 

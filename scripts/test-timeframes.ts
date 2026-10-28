@@ -8,13 +8,16 @@
  *   through the cursor must join without gaps or overlaps, and history must reach far back.
  *   Aggregated klines (Coinbase 4h from 1h): no partial first candle.
  *   Live folding (`applyTrade`) and bucket alignment for every chart timeframe.
+ *   Recorded history (tradeRecorder): a coin whose REST trades reach back only 30 s opens with hours
+ *   of exact 30s candles recorded from the trade stream; a reconnect's partial bucket is left out.
  *
- * `fetch` is stubbed (no network). Exits 1 on any failed check.
+ * `fetch` and `WebSocket` are stubbed (no network). Exits 1 on any failed check.
  */
 import { TIMEFRAME_MS } from '@/lib/market/exchanges';
 import type { ChartTimeframe, RawCandle, SubMinute } from '@/lib/market/exchanges';
 import { aggregate, applyTrade, trimPartialHead } from '@/lib/market/exchanges/shared';
-import { getKlines, getSubMinuteCandles } from '@/lib/market/server/marketData';
+import { getKlines, getSubMinuteCandles, lookupInstrument } from '@/lib/market/server/marketData';
+import { recordedCandles, startTradeRecorder, trackTrades } from '@/lib/market/server/tradeRecorder';
 import { CHART_TIMEFRAMES } from '@/components/chart/expanded/ExpandedHeader';
 
 const results: string[] = [];
@@ -73,8 +76,10 @@ globalThis.fetch = (async (input: string | URL | Request) => {
   const q = u.searchParams;
   switch (`${u.hostname}${u.pathname}`) {
     case 'fapi.binance.com/fapi/v1/exchangeInfo':
-      return json({ symbols: [{ status: 'TRADING', contractType: 'PERPETUAL', quoteAsset: 'USDT', baseAsset: 'TEST', symbol: 'TESTUSDT' }] });
+      return json({ symbols: ['TEST', 'REC'].map((b) => ({ status: 'TRADING', contractType: 'PERPETUAL', quoteAsset: 'USDT', baseAsset: b, symbol: `${b}USDT` })) });
     case 'fapi.binance.com/fapi/v1/aggTrades':
+      // REC: only the newest 300 trades (30 s) and nothing older — like a busy coin on a venue whose trades don't page far.
+      if (q.get('symbol') === 'RECUSDT') return json(q.has('fromId') ? [] : binanceAgg(TRADES[TRADES.length - 300].id));
       return json(q.has('fromId') ? binanceAgg(Number(q.get('fromId'))) : binanceAgg(TRADES[TRADES.length - 1000].id));
     case 'www.okx.com/api/v5/public/instruments':
       return json({ data: [{ state: 'live', instId: 'TEST-USDT-SWAP', ctVal: '1' }] });
@@ -134,6 +139,86 @@ async function subMinute(venue: 'binance' | 'okx' | 'gate', tf: SubMinute, label
   check(`${label}: history after scrolling covers ≥ ${need} min`, minutes >= need, `${minutes.toFixed(0)} min, ${series.length} candles`);
 }
 
+/* ── Fake trade stream (the recorder's socket) ── */
+class FakeSocket {
+  static readonly CONNECTING = 0; static readonly OPEN = 1; static readonly CLOSING = 2; static readonly CLOSED = 3;
+  static all: FakeSocket[] = [];
+  readyState = 0;
+  sent: string[] = [];
+  onopen: (() => void) | null = null;
+  onmessage: ((e: { data: string }) => void) | null = null;
+  onclose: ((e: { code: number; reason: string }) => void) | null = null;
+  onerror: (() => void) | null = null;
+  constructor(readonly url: string) {
+    FakeSocket.all.push(this);
+    setTimeout(() => { this.readyState = 1; this.onopen?.(); }, 0);
+  }
+  send(frame: string) { this.sent.push(frame); }
+  close() { if (this.readyState === 3) return; this.readyState = 3; this.onclose?.({ code: 1006, reason: '' }); }
+  /** Deliver trades as Binance aggTrade events (array batches). */
+  push(trades: readonly Trade[]) {
+    for (let i = 0; i < trades.length; i += 2_000) {
+      this.onmessage?.({ data: JSON.stringify(trades.slice(i, i + 2_000).map((x) => ({ e: 'aggTrade', s: 'RECUSDT', a: x.id, p: String(x.price), q: String(x.size), T: x.t, m: !x.buy }))) });
+    }
+  }
+}
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+async function until(ok: () => boolean, ms = 5_000): Promise<boolean> {
+  for (const end = Date.now() + ms; Date.now() < end; await sleep(20)) if (ok()) return true;
+  return false;
+}
+
+async function recorded(): Promise<void> {
+  (globalThis as unknown as { WebSocket: unknown }).WebSocket = FakeSocket;
+  const stop = startTradeRecorder('binance', (b) => lookupInstrument('binance', b), () => [], 0);
+  // Before anything is recorded the chart has only its REST page: a few candles.
+  const before = await getSubMinuteCandles('binance', 'REC', '30s'); // also asks the recorder to track REC
+  check('REST alone (no recording yet): only a few 30s candles', before.candles.length <= 2, `${before.candles.length} candles`);
+  trackTrades('binance', 'REC');
+  const live = () => FakeSocket.all.find((w) => w.readyState === 1 && w.sent.some((f) => f.includes('recusdt@aggTrade')));
+  check('a 30s chart request subscribes the coin’s trade stream', await until(() => !!live()));
+
+  // The stream delivers 3 h of trades; mid-way the connection drops and 40 s of trades are missed.
+  const cut = START + 90 * 60_000 + 7_000; // inside a bucket
+  live()!.push(TRADES.filter((x) => x.t < cut));
+  const dropped = live()!;
+  dropped.close();
+  check('reconnects after a drop', await until(() => !!live() && live() !== dropped, 8_000));
+  live()!.push(TRADES.filter((x) => x.t >= cut + 40_000));
+
+  const span = 30_000;
+  await sleep(5_100); // past the loader's 5 s cache of the first (pre-recording) answer
+  const first = await getSubMinuteCandles('binance', 'REC', '30s');
+  check('30s chart now opens with recorded history (240 candles)', first.candles.length === 240, `${first.candles.length} candles, ${((first.candles.at(-1)!.t - first.candles[0].t) / 3_600_000).toFixed(1)} h`);
+  const wrong = closed(first.candles, span).filter((c) => !sameCandle(c, T30.get(c.t)));
+  check('every recorded candle equals the true candle (OHLCV)', wrong.length === 0, wrong.length ? `first wrong at ${new Date(wrong[0].t).toISOString()}` : `${first.candles.length} checked`);
+  check('candles are in order, aligned, without duplicates', first.candles.every((c, i) => c.t % span === 0 && (i === 0 || c.t > first.candles[i - 1].t)));
+
+  // Scroll back through the recording to its start.
+  let series = first.candles, cursor = first.cursor, pages = 0, joined = true;
+  while (cursor && pages < 10) {
+    const older = await getSubMinuteCandles('binance', 'REC', '30s', cursor);
+    cursor = older.cursor;
+    if (!older.candles.length) break;
+    pages++;
+    if (older.candles.at(-1)!.t >= series[0].t) joined = false;
+    series = [...older.candles, ...series];
+  }
+  check('scrolling back pages through the recording', pages >= 1 && joined, `${pages} older page(s)`);
+  check('…older recorded candles are exact too', series.every((c) => c.t + span > TRADES[TRADES.length - 1].t || sameCandle(c, T30.get(c.t))));
+  check('…and the scroll-back ends (no cursor past the recording)', cursor === null);
+  const startBucket = Math.floor(START / span) * span;
+  check('recording’s first bucket (started mid-bucket) is left out', !series.some((c) => c.t === startBucket) || START % span === 0);
+  const cutBucket = Math.floor(cut / span) * span;
+  check('the bucket a reconnect happened in is left out (it missed trades)', !series.some((c) => c.t === cutBucket));
+  const resumed = Math.floor((cut + 40_000) / span) * span;
+  check('…as is the bucket recording resumed in', !series.some((c) => c.t === resumed));
+  const hours = (series.at(-1)!.t - series[0].t) / 3_600_000;
+  check('history reaches back ≥ 2.5 h', hours >= 2.5, `${hours.toFixed(2)} h, ${series.length} candles`);
+  check('1s is recorded too (last 15 min)', recordedCandles('binance', 'REC', '1s').length >= 800, `${recordedCandles('binance', 'REC', '1s').length} candles`);
+  stop();
+}
+
 async function main(): Promise<void> {
   section('Bucket alignment for every chart timeframe');
   check('every chart timeframe has a span', CHART_TIMEFRAMES.every((tf) => TIMEFRAME_MS[tf] > 0), CHART_TIMEFRAMES.join(' '));
@@ -164,6 +249,9 @@ async function main(): Promise<void> {
   await subMinute('okx', '30s', 'OKX 30s', 6);
   section('Native 30s — Gate');
   await subMinute('gate', '30s', 'Gate 30s', 3);
+
+  section('Recorded 30s history (server trade recorder)');
+  await recorded();
 
   section('Aggregated klines (no partial first candle)');
   // 300 = the chart's seed size: more than the window holds, so nothing would hide a partial first candle.
