@@ -13,11 +13,12 @@
  *
  * `fetch` and `WebSocket` are stubbed (no network). Exits 1 on any failed check.
  */
+import './test-env'; // first: a throwaway SX_DATA_DIR for the recorder's saved files
 import { TIMEFRAME_MS } from '@/lib/market/exchanges';
 import type { ChartTimeframe, RawCandle, SubMinute } from '@/lib/market/exchanges';
 import { aggregate, applyTrade, trimPartialHead } from '@/lib/market/exchanges/shared';
 import { getKlines, getSubMinuteCandles, lookupInstrument } from '@/lib/market/server/marketData';
-import { recordedCandles, startTradeRecorder, trackTrades } from '@/lib/market/server/tradeRecorder';
+import { recordedCandles, saveRecordings, startTradeRecorder, trackTrades } from '@/lib/market/server/tradeRecorder';
 import { CHART_TIMEFRAMES } from '@/components/chart/expanded/ExpandedHeader';
 
 const results: string[] = [];
@@ -77,6 +78,7 @@ const MINUTES: RawCandle[] = [];
   for (let i = 0; i < 2_000; i++) MINUTES.push({ t: m0 + i * 60_000, o: 10 + i, h: 11 + i, l: 9 + i, c: 10.5 + i, v: i + 1 });
 }
 let bybitKlineRequests = 0;
+let bkfRequests = 0;
 
 globalThis.fetch = (async (input: string | URL | Request) => {
   requests++;
@@ -84,10 +86,13 @@ globalThis.fetch = (async (input: string | URL | Request) => {
   const q = u.searchParams;
   switch (`${u.hostname}${u.pathname}`) {
     case 'fapi.binance.com/fapi/v1/exchangeInfo':
-      return json({ symbols: ['TEST', 'REC'].map((b) => ({ status: 'TRADING', contractType: 'PERPETUAL', quoteAsset: 'USDT', baseAsset: b, symbol: `${b}USDT` })) });
+      return json({ symbols: ['TEST', 'REC', 'BKF', 'GAP'].map((b) => ({ status: 'TRADING', contractType: 'PERPETUAL', quoteAsset: 'USDT', baseAsset: b, symbol: `${b}USDT` })) });
     case 'fapi.binance.com/fapi/v1/aggTrades':
       // REC: only the newest 300 trades (30 s) and nothing older — like a busy coin on a venue whose trades don't page far.
       if (q.get('symbol') === 'RECUSDT') return json(q.has('fromId') ? [] : binanceAgg(TRADES[TRADES.length - 300].id));
+      if (q.get('symbol') === 'BKFUSDT') bkfRequests++;
+      // GAP: the third page back fails (the backfill must stop there, not leave a hole).
+      if (q.get('symbol') === 'GAPUSDT' && q.has('fromId') && Number(q.get('fromId')) === TRADES[TRADES.length - 1000].id - 3_000) return new Response('busy', { status: 503 });
       return json(q.has('fromId') ? binanceAgg(Number(q.get('fromId'))) : binanceAgg(TRADES[TRADES.length - 1000].id));
     case 'api.bybit.com/v5/market/instruments-info':
       return json({ result: { list: [{ status: 'Trading', quoteCoin: 'USDT', contractType: 'LinearPerpetual', baseCoin: 'TEST', symbol: 'TESTUSDT' }] } });
@@ -188,10 +193,12 @@ async function until(ok: () => boolean, ms = 5_000): Promise<boolean> {
 
 async function recorded(): Promise<void> {
   (globalThis as unknown as { WebSocket: unknown }).WebSocket = FakeSocket;
+  // Without a recording the chart has only its REST page: a few candles (REC's trades reach back 30 s).
+  const before = await getSubMinuteCandles('binance', 'REC', '30s');
+  check('REST alone (no recording): only a few 30s candles', before.candles.length <= 2, `${before.candles.length} candles`);
+  await sleep(5_100); // past the loader's 5 s cache
+  // The recorder then streams the market (here: replays its 3 h of trades, oldest first).
   const stop = startTradeRecorder('binance', (b) => lookupInstrument('binance', b), () => [], 0);
-  // Before anything is recorded the chart has only its REST page: a few candles.
-  const before = await getSubMinuteCandles('binance', 'REC', '30s'); // also asks the recorder to track REC
-  check('REST alone (no recording yet): only a few 30s candles', before.candles.length <= 2, `${before.candles.length} candles`);
   trackTrades('binance', 'REC');
   const live = () => FakeSocket.all.find((w) => w.readyState === 1 && w.sent.some((f) => f.includes('recusdt@aggTrade')));
   check('a 30s chart request subscribes the coin’s trade stream', await until(() => !!live()));
@@ -237,6 +244,46 @@ async function recorded(): Promise<void> {
   stop();
 }
 
+/** A cold coin opened on 30s: backfilled in parallel, the result recorded (30s and 1s), saved across a restart. */
+async function backfill(): Promise<void> {
+  const resolve = (b: string) => lookupInstrument('binance', b);
+  let stop = startTradeRecorder('binance', resolve, () => [], 0);
+  const span = 30_000;
+  const exact = (cs: RawCandle[], T: Map<number, RawCandle>, sp: number) => closed(cs, sp).every((c) => sameCandle(c, T.get(c.t)));
+
+  const first = await getSubMinuteCandles('binance', 'BKF', '30s');
+  const minutes = (first.candles.at(-1)!.t - first.candles[0].t) / 60_000;
+  check('cold coin (never recorded): 30s opens with backfilled history', first.candles.length >= 80, `${first.candles.length} candles (${minutes.toFixed(0)} min) from ${bkfRequests} upstream requests`);
+  check('…every candle exact', exact(first.candles, T30, span));
+  check('…within the backfill budget (1 + 24 pages)', bkfRequests <= 25);
+  const rec30 = recordedCandles('binance', 'BKF', '30s');
+  const rec1 = recordedCandles('binance', 'BKF', '1s');
+  check('the backfill is recorded: 30s', rec30.length >= 80 && rec30.every((c) => sameCandle(c, T30.get(c.t))), `${rec30.length} candles`);
+  check('…and 1s (a 1s chart opens instantly too)', rec1.length >= 600 && rec1.every((c) => sameCandle(c, T1.get(c.t))), `${rec1.length} candles`);
+
+  await sleep(5_100); // past the loader's 5 s cache
+  bkfRequests = 0;
+  const again = await getSubMinuteCandles('binance', 'BKF', '30s');
+  check('next open: same history from the recording, newest trades only (1 request)', bkfRequests === 1 && again.candles.length >= first.candles.length - 1 && exact(again.candles, T30, span), `${bkfRequests} request(s), ${again.candles.length} candles`);
+  bkfRequests = 0;
+  const s1 = await getSubMinuteCandles('binance', 'BKF', '1s');
+  check('1s on the same coin: full 600 candles, 1 request', s1.candles.length === 600 && bkfRequests === 1 && exact(s1.candles, T1, 1_000), `${s1.candles.length} candles, ${bkfRequests} request(s)`);
+
+  const gap = await getSubMinuteCandles('binance', 'GAP', '30s');
+  const failedFrom = TRADES.find((x) => x.id === TRADES[TRADES.length - 1000].id - 3_000)!.t;
+  check('a failed backfill page: history stops there — exact candles, none spanning the hole', exact(gap.candles, T30, span) && gap.candles[0].t >= failedFrom, `${gap.candles.length} candles from ${new Date(gap.candles[0].t).toISOString().slice(11, 19)}`);
+
+  // Restart: saved to the data directory, loaded by the next recorder.
+  await saveRecordings();
+  stop();
+  check('stopped recorder: nothing in memory', recordedCandles('binance', 'BKF', '30s').length === 0);
+  stop = startTradeRecorder('binance', resolve, () => [], 0);
+  await until(() => recordedCandles('binance', 'BKF', '30s').length > 0);
+  const loaded = recordedCandles('binance', 'BKF', '30s');
+  check('after a restart the saved 30s recording is back', loaded.length >= rec30.length - 1 && loaded.every((c) => sameCandle(c, T30.get(c.t))), `${loaded.length} of ${rec30.length} candles`);
+  stop();
+}
+
 async function main(): Promise<void> {
   section('Bucket alignment for every chart timeframe');
   check('every chart timeframe has a span', CHART_TIMEFRAMES.every((tf) => TIMEFRAME_MS[tf] > 0), CHART_TIMEFRAMES.join(' '));
@@ -270,6 +317,9 @@ async function main(): Promise<void> {
 
   section('Recorded 30s history (server trade recorder)');
   await recorded();
+
+  section('Cold coins: parallel backfill, recorded, saved across restarts');
+  await backfill();
 
   section('Full chart history in one answer (server pages upstream)');
   const full = await getKlines('bybit', 'TEST', '1m', 1_500);

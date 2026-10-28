@@ -151,6 +151,11 @@ export interface ExchangeAdapter {
     parseTrades(json: unknown): RawTrade[];
     /** The page of trades before `oldest` (paging back for sub-minute history); absent: recent trades only. */
     olderTradesUrl?(meta: InstrumentMeta, oldest: RawTrade): string | null;
+    /**
+     * Venues whose trade ids are sequential integers: the 1000 trades with ids from `fromId` (any
+     * page addressable directly, so sub-minute history is backfilled with parallel requests).
+     */
+    tradesFromIdUrl?(meta: InstrumentMeta, fromId: number): string;
     /** Open-interest history / snapshot, where the venue publishes it. */
     oi?: {
       periods: readonly Timeframe[];

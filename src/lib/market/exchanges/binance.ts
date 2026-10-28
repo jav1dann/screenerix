@@ -91,6 +91,7 @@ export const binance: ExchangeAdapter = {
     tradesUrl: (meta) => `${REST}/fapi/v1/aggTrades?symbol=${meta.inst}&limit=1000`,
     // Aggregate-trade ids are sequential: the 1000 before the oldest one.
     olderTradesUrl: (meta, oldest) => (oldest.id && Number(oldest.id) > 0 ? `${REST}/fapi/v1/aggTrades?symbol=${meta.inst}&fromId=${Math.max(0, Number(oldest.id) - 1000)}&limit=1000` : null),
+    tradesFromIdUrl: (meta, fromId) => `${REST}/fapi/v1/aggTrades?symbol=${meta.inst}&fromId=${Math.max(0, fromId)}&limit=1000`,
     parseTrades(json) {
       if (!Array.isArray(json)) return [];
       const out: RawTrade[] = [];

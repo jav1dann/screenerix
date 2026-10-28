@@ -290,8 +290,15 @@ export default function AdvancedChart(props: AdvancedChartProps) {
       if (price !== null && price > 0) c.onAlertPick(price);
     };
     // Scrolled to the left edge: page in older history.
+    // Only after the user scrolls / zooms: a history shorter than the view (sub-minute) must not
+    // start pulling older pages in by itself — the chart shows what it opened with, in one go.
+    let userMoved = false;
+    const moved = () => { userMoved = true; };
+    host.addEventListener('pointerdown', moved);
+    host.addEventListener('wheel', moved, { passive: true });
+    host.addEventListener('touchstart', moved, { passive: true });
     const onRange = (r: { from: number; to: number } | null) => {
-      if (r && r.from < OLDER_EDGE_BARS) void stream.loadOlder();
+      if (userMoved && r && r.from < OLDER_EDGE_BARS) void stream.loadOlder();
     };
     chart.subscribeCrosshairMove(onMove);
     chart.subscribeClick(onClick);
@@ -325,6 +332,9 @@ export default function AdvancedChart(props: AdvancedChartProps) {
       chart.unsubscribeCrosshairMove(onMove);
       chart.unsubscribeClick(onClick);
       chart.timeScale().unsubscribeVisibleLogicalRangeChange(onRange);
+      host.removeEventListener('pointerdown', moved);
+      host.removeEventListener('wheel', moved);
+      host.removeEventListener('touchstart', moved);
     };
   }, [core, stream]);
 

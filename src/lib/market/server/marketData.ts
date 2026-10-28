@@ -7,7 +7,7 @@ import { ADAPTERS, KLINE_TIMEFRAMES, TIMEFRAME_MS } from '@/lib/market/exchanges
 import type { ExchangeId, FeedEvent, InstrumentMeta, OiPoint, RawCandle, RawTrade, SubMinute, Timeframe } from '@/lib/market/exchanges';
 import { aggregate, candlesFromTrades, trimPartialHead } from '@/lib/market/exchanges/shared';
 import { limiter, RateLimitedError } from '@/lib/server/scan/limiter';
-import { recordedCandles, recordsTrades, trackTrades } from './tradeRecorder';
+import { recordBackfill, recordedCandles, recordsTrades, trackTrades, wasBackfilled } from './tradeRecorder';
 
 export class UpstreamError extends Error {
   constructor(message: string, readonly status = 502) { super(message); }
@@ -163,6 +163,34 @@ export async function getTrades(id: ExchangeId, base: string): Promise<RawTrade[
  * How much sub-minute history a chart opens with, and the most upstream requests spent on it.
  * Thin markets reach `bars` in one page; for the busiest the page budget is the limit.
  */
+/**
+ * Trades before id `firstId` (oldest first) back to time `until`, in pages of 1000 addressed by id,
+ * fetched `BACKFILL_BATCH` at a time. Only pages contiguous with `firstId` are kept: a failed page
+ * ends the backfill there (a hole in the trades would make wrong candles). `reachedStart`: id 0.
+ */
+async function backfillById(id: ExchangeId, meta: InstrumentMeta, firstId: number, until: number, maxPages: number): Promise<{ trades: RawTrade[]; reachedStart: boolean }> {
+  const rest = ADAPTERS[id].rest;
+  let out: RawTrade[] = [];
+  for (let k = 1; k <= maxPages; k += BACKFILL_BATCH) {
+    const ks = Array.from({ length: Math.min(BACKFILL_BATCH, maxPages - k + 1) }, (_, i) => k + i).filter((x) => firstId - (x - 1) * 1_000 > 0);
+    if (!ks.length) return { trades: out, reachedStart: true };
+    const pages = await Promise.all(ks.map((x) => upstreamJson(rest.tradesFromIdUrl!(meta, Math.max(0, firstId - x * 1_000))).then((j) => rest.parseTrades(j), () => null)));
+    for (let i = 0; i < pages.length; i++) {
+      const lo = Math.max(0, firstId - ks[i] * 1_000), hi = firstId - (ks[i] - 1) * 1_000;
+      const page = pages[i]?.filter((t) => Number(t.id) >= lo && Number(t.id) < hi);
+      if (!page?.length) return { trades: out, reachedStart: lo === 0 && !!page };
+      out = [...page, ...out];
+      if (lo === 0) return { trades: out, reachedStart: true };
+      if (page[0].t <= until) return { trades: out, reachedStart: false };
+    }
+  }
+  return { trades: out, reachedStart: false };
+}
+
+/** First-load backfill on venues with sequential trade ids: pages of 1000 trades, fetched in parallel batches. */
+const BACKFILL_PAGES: Record<SubMinute, number> = { '30s': 24, '1s': 8 };
+const BACKFILL_BATCH = 6;
+
 const SUB_MINUTE: Record<SubMinute, { bars: number; pages: number }> = {
   '1s': { bars: 600, pages: 3 },
   '30s': { bars: 720, pages: 6 }, // 6 h — the server's recording (tradeRecorder) holds that much
@@ -265,7 +293,21 @@ async function loadSubMinute(id: ExchangeId, base: string, tf: SubMinute, cursor
   let trades = older ? [] : rest.parseTrades(await upstreamJson(rest.tradesUrl(meta)));
   const seen = new Set(trades.flatMap((t) => (t.id ? [t.id] : [])));
   let exhausted = !rest.olderTradesUrl;
-  for (let i = older ? 0 : 1; i < pages && rest.olderTradesUrl; i++) {
+  // First load: what the recording doesn't cover yet is backfilled from older trades, all pages
+  // in parallel where the venue's trade ids are sequential (Binance, Coinbase).
+  const newestT = trades[trades.length - 1]?.t ?? Date.now();
+  const recordedFrom = older ? undefined : recordedCandles(id, base, tf)[0]?.t;
+  const covered = recordedFrom !== undefined && (recordedFrom <= newestT - want + span || wasBackfilled(id, base));
+  const firstId = Number(trades[0]?.id);
+  let budget = older ? pages : covered ? 1 : pages;
+  if (!older && !covered && rest.tradesFromIdUrl && Number.isInteger(firstId) && firstId > 0) {
+    const back = await backfillById(id, meta, firstId, newestT - want, BACKFILL_PAGES[tf]);
+    back.trades.forEach((t) => seen.add(t.id!));
+    trades = [...back.trades, ...trades];
+    exhausted = back.reachedStart;
+    budget = 1; // paged here
+  }
+  for (let i = older ? 0 : 1; i < budget && rest.olderTradesUrl; i++) {
     const oldest = trades[0] ?? older?.anchor;
     if (!oldest || (trades.length && trades[trades.length - 1].t - trades[0].t >= want)) break;
     const url = rest.olderTradesUrl(meta, oldest);
@@ -286,6 +328,15 @@ async function loadSubMinute(id: ExchangeId, base: string, tf: SubMinute, cursor
   const keepHead = (exhausted && older) || built.length < 2;
   const fromTrades = (keepHead ? built : built.slice(1)).slice(-bars);
   const asOf = older ? Date.now() : scaled[scaled.length - 1]?.t ?? Date.now();
+  // The closed buckets these trades make (both sub-minute timeframes) go into the recording.
+  if (!older && scaled.length > 1 && recordsTrades(id)) {
+    for (const t of ['30s', '1s'] as const) {
+      const sp = TIMEFRAME_MS[t];
+      const all = candlesFromTrades(scaled, sp, Infinity);
+      const closed = (exhausted ? all : all.slice(1)).filter((c) => c.t + sp <= asOf);
+      recordBackfill(id, base, meta, t, closed);
+    }
+  }
   // First load: the server's recording fills in before the trades page (the page is exact for the
   // recent minutes; the recording reaches back hours). Scrolling back continues in the recording.
   const recorded = older ? [] : recordedCandles(id, base, tf, fromTrades[0]?.t ?? Infinity);

@@ -55,11 +55,18 @@ Expected on start:
 | `NEXT_PUBLIC_TELEGRAM_BOT_USERNAME "…" isn't a valid bot username — ignored` | Typo | Fix it, rebuild |
 | `another process is polling this bot token` (repeating) | Two servers on one token (or a dev machine) | Stop the other one |
 
-**30s / 1s history.** Binance, Bybit, Bitget and Coinbase publish no sub-minute candles, and their
-trade history reaches back only minutes on a busy coin. The server records 30s / 1s candles from
-their trade streams — the 20 most traded coins per exchange, plus any coin opened on a 30s / 1s
-chart (kept for 6 h) — up to 6 h of 30s and 15 min of 1s. The recording is in memory: after a
-restart it builds up again (a coin opened right after a restart shows a few minutes at first).
+**30s / 1s history.** Binance, Bybit, Bitget and Coinbase publish no sub-minute candles, so the
+server builds them from trades, exactly:
+- **Recording:** the 50 most traded coins per exchange, plus every coin opened on a 30s / 1s chart
+  (kept 6 h), are recorded from the trade streams — up to 6 h of 30s and 15 min of 1s. The 30s
+  recording is saved to `SX_DATA_DIR/subminute/` every 2 min and reloaded on start.
+- **Backfill:** a coin opened before it was recorded is backfilled from REST trades on the spot —
+  Binance / Coinbase: up to 24 pages of 1000 trades in parallel; Bitget: 6 pages in a row — and the
+  result joins the recording, so every later open (30s or 1s) is instant. How far back that
+  reaches depends on the coin: hours on most coins, tens of minutes on the very busiest (which the
+  recording covers). Bybit has no older trades: its history is the recording.
+- After a restart the downtime is a gap; the first open of a coin backfills it where it can.
+
 OKX and Gate have their own sub-minute candles and aren't recorded.
 | `getMe failed (…) — will keep trying` / `polling: fetch failed` | No route to `api.telegram.org` | Check outbound HTTPS / firewall |
 

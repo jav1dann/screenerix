@@ -123,6 +123,8 @@ export const coinbase: ExchangeAdapter = {
     tradesUrl: (meta) => `${REST}/products/${meta.inst}/trades?limit=1000`,
     // `after` pages to older trades (by trade id).
     olderTradesUrl: (meta, oldest) => (oldest.id ? `${REST}/products/${meta.inst}/trades?limit=1000&after=${oldest.id}` : null),
+    // `after` = trades with ids below it: the 1000 from `fromId` end just before fromId + 1000.
+    tradesFromIdUrl: (meta, fromId) => `${REST}/products/${meta.inst}/trades?limit=1000&after=${Math.max(1, fromId + 1000)}`,
     parseTrades(json) {
       if (!Array.isArray(json)) return [];
       const out: RawTrade[] = [];
