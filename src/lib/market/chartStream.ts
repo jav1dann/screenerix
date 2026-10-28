@@ -66,8 +66,9 @@ export interface ChartStream {
   retain(): () => void;
   retry(): void;
   /**
-   * Prepend the page of candles before the oldest one (for scrolling back / go-to-date).
-   * Resolves false at the start of the venue's history, while not ready, or on sub-minute timeframes.
+   * Prepend the page of candles before the oldest one (for scrolling back / go-to-date). Sub-minute
+   * timeframes page back through the server's cursor (native candles or older trades).
+   * Resolves false at the start of the available history or while not ready.
    */
   loadOlder(): Promise<boolean>;
 }
@@ -113,6 +114,8 @@ function createChartStream(key: ChartKey): ChartStream & { dispose(): void } {
   let maxCandles = isSubMinute(tf) ? 2_000 : 1_000;
   let olderReq: Promise<boolean> | null = null;
   let historyStart = false;
+  /** Sub-minute: where the page before the oldest candle starts (null: none available). */
+  let subCursor: string | null = null;
 
   let status: ChartStatus = 'loading';
   let error: string | undefined;
@@ -196,13 +199,15 @@ function createChartStream(key: ChartKey): ChartStream & { dispose(): void } {
     const subMinute = isSubMinute(tf);
     const [main, oneMinute] = await Promise.all([
       subMinute
-        ? fetchSubMinute(exchange, symbol, tf).then((r) => ({ candles: r.candles, lastTrade: r.asOf }))
-        : fetchKlines(exchange, symbol, tf as Timeframe, SEED_LIMIT).then((c) => ({ candles: c, lastTrade: Date.now() })),
+        ? fetchSubMinute(exchange, symbol, tf).then((r) => ({ candles: r.candles, lastTrade: r.asOf, cursor: r.cursor }))
+        : fetchKlines(exchange, symbol, tf as Timeframe, SEED_LIMIT).then((c) => ({ candles: c, lastTrade: Date.now(), cursor: null })),
       needsMinute ? fetchKlines(exchange, symbol, '1m', MINUTE_SEED) : Promise.resolve(null),
     ]);
     if (g !== gen) return;
     const live = seeded ? candles.slice(-1) : pendingCandles.splice(0);
     candles = main.candles;
+    subCursor = main.cursor;
+    historyStart = subMinute && !subCursor;
     minute = oneMinute ?? candles;
     live.forEach((c) => applyCandle(candles, c, maxCandles));
     // Replay buffered trades that the REST seed didn't already include.
@@ -338,14 +343,20 @@ function createChartStream(key: ChartKey): ChartStream & { dispose(): void } {
       };
     },
     loadOlder() {
-      if (isSubMinute(tf) || status !== 'ready' || historyStart || !candles.length) return Promise.resolve(false);
+      if (status !== 'ready' || historyStart || !candles.length) return Promise.resolve(false);
       if (olderReq) return olderReq;
       const g = gen;
-      olderReq = fetchKlines(exchange, symbol, tf as Timeframe, SEED_LIMIT, candles[0].t - 1)
+      const page: Promise<RawCandle[]> = isSubMinute(tf)
+        ? fetchSubMinute(exchange, symbol, tf, subCursor ?? undefined).then((r) => {
+          if (g === gen) subCursor = r.cursor;
+          return r.candles;
+        })
+        : fetchKlines(exchange, symbol, tf as Timeframe, SEED_LIMIT, candles[0].t - 1);
+      olderReq = page
         .then((older) => {
           if (g !== gen) return false;
           const head = older.filter((c) => c.t < candles[0].t);
-          if (!head.length) { historyStart = true; return false; }
+          if (!head.length) { if (!isSubMinute(tf) || !subCursor) historyStart = true; return false; }
           candles.unshift(...head); // in place: the 1m series may alias `candles`
           maxCandles = Math.max(maxCandles, candles.length + 1_000);
           emit({ type: 'reset', candles });

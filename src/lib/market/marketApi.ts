@@ -38,9 +38,13 @@ export async function fetchInstrument(id: ExchangeId, symbol: string): Promise<I
 export const fetchKlines = (id: ExchangeId, symbol: string, tf: Timeframe, limit: number, end?: number): Promise<RawCandle[]> =>
   fetchJson<{ candles: RawCandle[] }>(`/api/market/${id}/klines?symbol=${encodeURIComponent(symbol)}&tf=${tf}&limit=${limit}${end === undefined ? '' : `&end=${end}`}`).then((r) => r.candles);
 
-/** Recent 1s / 30s candles (base units); trades after `asOf` are not in them yet. */
-export const fetchSubMinute = (id: ExchangeId, symbol: string, tf: SubMinute): Promise<{ candles: RawCandle[]; asOf: number }> =>
-  fetchJson<{ candles: RawCandle[]; asOf: number }>(`/api/market/${id}/klines?symbol=${encodeURIComponent(symbol)}&tf=${tf}`);
+/**
+ * Recent 1s / 30s candles (base units); trades after `asOf` are not in them yet. `cursor` (from a
+ * previous page) loads the page before it; a null `cursor` in the answer: no older history.
+ */
+export const fetchSubMinute = (id: ExchangeId, symbol: string, tf: SubMinute, cursor?: string): Promise<{ candles: RawCandle[]; asOf: number; cursor: string | null }> =>
+  fetchJson<{ candles: RawCandle[]; asOf: number; cursor?: string | null }>(`/api/market/${id}/klines?symbol=${encodeURIComponent(symbol)}&tf=${tf}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`)
+    .then((r) => ({ candles: r.candles, asOf: r.asOf, cursor: r.cursor ?? null }));
 
 /** Open-interest history for a chart timeframe (period is chosen server-side; null = no history). */
 export const fetchOiHistory = (id: ExchangeId, symbol: string, tf: string, limit = 200): Promise<{ period: Timeframe | null; points: OiPoint[] }> =>

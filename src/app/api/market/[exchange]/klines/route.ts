@@ -1,11 +1,12 @@
 import type { NextRequest } from 'next/server';
 import { isExchangeId, isSubMinute, isTimeframe } from '@/lib/market/exchanges';
-import { getKlines, getSubMinuteCandles, isBaseSymbol, UpstreamError } from '@/lib/market/server/marketData';
+import { getKlines, getSubMinuteCandles, isBaseSymbol, parseCursor, UpstreamError } from '@/lib/market/server/marketData';
 
 /**
  * GET /api/market/:exchange/klines?symbol=BTC&tf=1m&limit=90 → { candles } (oldest first).
  * Optional `end` (ms): the candles opening at or before it, for older history.
- * `tf=1s` / `tf=30s` → { candles, asOf }: recent sub-minute history (no `limit` / `end`; see getSubMinuteCandles).
+ * `tf=1s` / `tf=30s` → { candles, asOf, cursor }: recent sub-minute history (no `limit` / `end`); pass `cursor`
+ * back for the page before it (see getSubMinuteCandles).
  */
 export async function GET(req: NextRequest, ctx: RouteContext<'/api/market/[exchange]/klines'>) {
   const { exchange } = await ctx.params;
@@ -20,7 +21,9 @@ export async function GET(req: NextRequest, ctx: RouteContext<'/api/market/[exch
   if (!isBaseSymbol(symbol)) return Response.json({ error: 'Invalid symbol' }, { status: 400 });
   if (isSubMinute(tf)) {
     try {
-      return Response.json(await getSubMinuteCandles(exchange, symbol, tf));
+      const cursor = q.get('cursor');
+      if (cursor !== null && !parseCursor(cursor)) return Response.json({ error: 'Invalid cursor' }, { status: 400 });
+      return Response.json(await getSubMinuteCandles(exchange, symbol, tf, cursor));
     } catch (e) {
       const status = e instanceof UpstreamError ? e.status : 502;
       return Response.json({ error: e instanceof Error ? e.message : 'Upstream error' }, { status });

@@ -79,6 +79,16 @@ export function aggregate(candles: RawCandle[], bucketMs: number): RawCandle[] {
 }
 
 /**
+ * Drop the oldest aggregated candle when the source data started inside its bucket (at
+ * `firstSourceT`, not on the bucket's open): it would be a partial candle — wrong open, high and low.
+ * A lone candle is kept.
+ */
+export function trimPartialHead(candles: RawCandle[], firstSourceT: number | undefined, bucketMs: number): RawCandle[] {
+  if (candles.length < 2 || firstSourceT === undefined || firstSourceT % bucketMs === 0) return candles;
+  return candles.slice(1);
+}
+
+/**
  * Split a venue base like "1000PEPE", "10000SATS" or "1000000MOG" into the real
  * coin and its contract multiplier. Plain bases (incl. "1INCH") pass through.
  */
@@ -126,8 +136,9 @@ export function applyTrade(series: RawCandle[], span: number, price: number, siz
     return next;
   }
   if (!last || bucket > last.t) {
-    const open = last?.c ?? price;
-    const next: RawCandle = { t: bucket, o: open, h: Math.max(open, price), l: Math.min(open, price), c: price, v: size };
+    // Like the venues' own candles: a bucket opens at its first trade (not the previous close,
+    // which would also stretch its high / low to a price never traded in it).
+    const next: RawCandle = { t: bucket, o: price, h: price, l: price, c: price, v: size };
     if (buy !== undefined) next.tb = buy;
     series.push(next);
     if (series.length > max) series.shift();
@@ -140,7 +151,5 @@ export function applyTrade(series: RawCandle[], span: number, price: number, siz
 export function candlesFromTrades(trades: RawTrade[], span: number, max: number): RawCandle[] {
   const out: RawCandle[] = [];
   for (const t of trades) applyTrade(out, span, t.price, t.size, t.t, max, t.side);
-  // The first bucket opens at its first trade, not a previous close.
-  if (out[0] && trades[0]) out[0] = { ...out[0], o: trades[0].price };
   return out;
 }

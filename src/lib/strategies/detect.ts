@@ -436,7 +436,10 @@ const PA_WINDOW = 40;
 /** A consolidation range lives this many bars after its impulse. */
 const RANGE_LIFE = 30;
 
-/** Candles aggregated to `ms` buckets (e.g. 5m → 15m); the newest bucket may still be forming. */
+/**
+ * Candles aggregated to `ms` buckets (e.g. 5m → 15m); the newest bucket may still be forming. A first
+ * bucket the source starts inside of is dropped (it would be partial: wrong open, high and low).
+ */
 export function resample(bars: readonly Bar[], ms: number): Bar[] {
   const out: Bar[] = [];
   for (const b of bars) {
@@ -451,7 +454,7 @@ export function resample(bars: readonly Bar[], ms: number): Bar[] {
       out.push({ t, o: b.o, h: b.h, l: b.l, c: b.c, v: b.v });
     }
   }
-  return out;
+  return out.length > 1 && bars[0].t % ms !== 0 ? out.slice(1) : out;
 }
 
 const isGreen = (b: Bar) => b.c > b.o;

@@ -5,7 +5,7 @@
 import { cacheLife } from 'next/cache';
 import { ADAPTERS, KLINE_TIMEFRAMES, TIMEFRAME_MS } from '@/lib/market/exchanges';
 import type { ExchangeId, FeedEvent, InstrumentMeta, OiPoint, RawCandle, RawTrade, SubMinute, Timeframe } from '@/lib/market/exchanges';
-import { aggregate, candlesFromTrades } from '@/lib/market/exchanges/shared';
+import { aggregate, candlesFromTrades, trimPartialHead } from '@/lib/market/exchanges/shared';
 import { limiter, RateLimitedError } from '@/lib/server/scan/limiter';
 
 export class UpstreamError extends Error {
@@ -121,7 +121,8 @@ export async function getKlines(id: ExchangeId, base: string, tf: Timeframe, lim
     .filter((c) => srcEnd === undefined || c.t <= srcEnd);
   const k = meta.priceScale;
   const scaled = raw.map((c) => ({ t: c.t, o: c.o * k, h: c.h * k, l: c.l * k, c: c.c * k, v: c.v * meta.contractSize, ...(c.n === undefined ? {} : { n: c.n }), ...(c.tb === undefined ? {} : { tb: c.tb * meta.contractSize }) }));
-  return (factor > 1 ? aggregate(scaled, TIMEFRAME_MS[tf]) : scaled).slice(-limit);
+  // Aggregated: the source window rarely starts on a target bar's open, so its first bar is dropped (partial).
+  return (factor > 1 ? trimPartialHead(aggregate(scaled, TIMEFRAME_MS[tf]), scaled[0]?.t, TIMEFRAME_MS[tf]) : scaled).slice(-limit);
 }
 
 /** Recent public trades, oldest first, in base units. */
@@ -146,18 +147,42 @@ const scaleCandle = (c: RawCandle, m: InstrumentMeta): RawCandle => ({
   ...(c.n === undefined ? {} : { n: c.n }), ...(c.tb === undefined ? {} : { tb: c.tb * m.contractSize }),
 });
 
+/** Sub-minute candles plus the cursor for the page before them (null: no older history available). */
+export interface SubMinutePage { candles: RawCandle[]; asOf: number; cursor: string | null }
+
+/**
+ * Where the next older page starts. Native candles: before the oldest candle's open. Trades: page
+ * back from the oldest kept trade (`anchor`), keeping only trades before `start` (the oldest kept
+ * bucket's open — earlier trades re-fetched from its second are already in the newer page).
+ */
+type Cursor = { kind: 'n'; before: number } | { kind: 't'; start: number; anchor: RawTrade };
+
+function encodeCursor(c: Cursor): string {
+  return c.kind === 'n' ? `n.${c.before}` : `t.${c.start}.${c.anchor.t}.${encodeURIComponent(c.anchor.id ?? '')}`;
+}
+
+export function parseCursor(s: string | null | undefined): Cursor | null {
+  if (!s || s.length > 200) return null;
+  const [kind, a, b, id] = s.split('.');
+  if (kind === 'n' && Number.isFinite(Number(a)) && Number(a) > 0) return { kind: 'n', before: Number(a) };
+  if (kind === 't' && Number(a) > 0 && Number(b) > 0 && id) return { kind: 't', start: Number(a), anchor: { t: Number(b), price: 0, size: 0, id: decodeURIComponent(id) } };
+  return null;
+}
+
 /**
  * 1s / 30s history: the venue's own sub-minute candles where it has them (Gate 30s, OKX 1s —
  * 30s is aggregated from 1s), otherwise built from trades, paging back where the venue allows
  * (Binance, Bitget, Gate, Coinbase; Bybit and OKX trades: the latest page only).
+ * Only complete buckets are returned (a first bucket the data started inside is dropped), and
+ * `cursor` (passed back as `cursor`) loads the page before them — sub-minute charts scroll back.
  * `asOf`: trades after this time are not in the candles (the live stream adds them).
  */
-export function getSubMinuteCandles(id: ExchangeId, base: string, tf: SubMinute): Promise<{ candles: RawCandle[]; asOf: number }> {
+export function getSubMinuteCandles(id: ExchangeId, base: string, tf: SubMinute, cursor: string | null = null): Promise<SubMinutePage> {
   // Charts opening the same series together share one load (paged trades cost real rate-limit weight).
-  const key = `${id}|${base}|${tf}`;
+  const key = `${id}|${base}|${tf}|${cursor ?? ''}`;
   const hit = subMinuteCache.get(key);
   if (hit && Date.now() - hit.at < SUB_MINUTE_CACHE_MS) return hit.p;
-  const p = loadSubMinute(id, base, tf);
+  const p = loadSubMinute(id, base, tf, parseCursor(cursor));
   subMinuteCache.set(key, { at: Date.now(), p });
   p.catch(() => subMinuteCache.delete(key));
   if (subMinuteCache.size > 500) for (const [k, v] of subMinuteCache) if (Date.now() - v.at >= SUB_MINUTE_CACHE_MS) subMinuteCache.delete(k);
@@ -165,9 +190,9 @@ export function getSubMinuteCandles(id: ExchangeId, base: string, tf: SubMinute)
 }
 
 const SUB_MINUTE_CACHE_MS = 5_000;
-const subMinuteCache = new Map<string, { at: number; p: Promise<{ candles: RawCandle[]; asOf: number }> }>();
+const subMinuteCache = new Map<string, { at: number; p: Promise<SubMinutePage> }>();
 
-async function loadSubMinute(id: ExchangeId, base: string, tf: SubMinute): Promise<{ candles: RawCandle[]; asOf: number }> {
+async function loadSubMinute(id: ExchangeId, base: string, tf: SubMinute, cursor: Cursor | null): Promise<SubMinutePage> {
   const meta = await requireInstrument(id, base);
   const rest = ADAPTERS[id].rest;
   const span = TIMEFRAME_MS[tf];
@@ -179,9 +204,10 @@ async function loadSubMinute(id: ExchangeId, base: string, tf: SubMinute): Promi
   if (src) {
     const k = native![src]!;
     const asOf = Date.now();
+    const start = cursor?.kind === 'n' ? cursor.before : undefined;
     let out: RawCandle[] = [];
     for (let i = 0; i < pages; i++) {
-      const before = out[0]?.t;
+      const before = out[0]?.t ?? start;
       let page: RawCandle[];
       try {
         page = rest.parseKlines(await upstreamJson(k.url(meta, k.maxLimit, before)), src, k.maxLimit).filter((c) => before === undefined || c.t < before);
@@ -194,25 +220,42 @@ async function loadSubMinute(id: ExchangeId, base: string, tf: SubMinute): Promi
       if (out[out.length - 1].t - out[0].t >= want) break;
     }
     const scaled = out.map((c) => scaleCandle(c, meta));
-    return { candles: (src === tf ? scaled : aggregate(scaled, span)).slice(-bars), asOf };
+    const candles = (src === tf ? scaled : trimPartialHead(aggregate(scaled, span), scaled[0]?.t, span)).slice(-bars);
+    return { candles, asOf, cursor: candles.length ? encodeCursor({ kind: 'n', before: candles[0].t }) : null };
   }
 
-  let trades = rest.parseTrades(await upstreamJson(rest.tradesUrl(meta)));
+  // Trades: the newest page (first load) or the pages before the cursor, oldest first.
+  const older = cursor?.kind === 't' ? cursor : null;
+  let trades = older ? [] : rest.parseTrades(await upstreamJson(rest.tradesUrl(meta)));
   const seen = new Set(trades.flatMap((t) => (t.id ? [t.id] : [])));
-  for (let i = 1; i < pages && rest.olderTradesUrl && trades.length; i++) {
-    if (trades[trades.length - 1].t - trades[0].t >= want) break;
-    const url = rest.olderTradesUrl(meta, trades[0]);
-    if (!url) break;
-    let older: RawTrade[];
-    try { older = rest.parseTrades(await upstreamJson(url)); } catch { break; }
-    const oldestT = trades[0].t;
-    const fresh = older.filter((t) => t.t <= oldestT && !(t.id && seen.has(t.id)));
-    if (!fresh.length) break;
+  let exhausted = !rest.olderTradesUrl;
+  for (let i = older ? 0 : 1; i < pages && rest.olderTradesUrl; i++) {
+    const oldest = trades[0] ?? older?.anchor;
+    if (!oldest || (trades.length && trades[trades.length - 1].t - trades[0].t >= want)) break;
+    const url = rest.olderTradesUrl(meta, oldest);
+    if (!url) { exhausted = true; break; }
+    let page: RawTrade[];
+    try { page = rest.parseTrades(await upstreamJson(url)); } catch (e) { if (!trades.length && older) throw e; break; }
+    const fresh = page.filter((t) => t.t <= oldest.t && !(t.id && (seen.has(t.id) || t.id === oldest.id)));
+    if (!fresh.length) { exhausted = true; break; }
     fresh.forEach((t) => { if (t.id) seen.add(t.id); });
     trades = [...fresh, ...trades];
   }
+  // Older pages: only what precedes the newer page's first bucket (the anchor's second may overlap it).
+  if (older) trades = trades.filter((t) => t.t < older.start);
   const scaled = trades.map((t) => ({ ...t, price: t.price * meta.priceScale, size: t.size * meta.contractSize }));
-  return { candles: candlesFromTrades(scaled, span, Infinity).slice(-bars), asOf: scaled[scaled.length - 1]?.t ?? Date.now() };
+  const built = candlesFromTrades(scaled, span, Infinity);
+  // Trades start inside the oldest bucket, so it is partial — unless the venue's history ends there.
+  // (A lone bucket is kept: a market so busy that every page fits in one bucket shows it partial.)
+  const keepHead = (exhausted && older) || built.length < 2;
+  const candles = (keepHead ? built : built.slice(1)).slice(-bars);
+  const first = candles[0];
+  const anchor = first ? trades.find((t) => t.t >= first.t) : undefined;
+  return {
+    candles,
+    asOf: older ? Date.now() : scaled[scaled.length - 1]?.t ?? Date.now(),
+    cursor: first && anchor && rest.olderTradesUrl && !exhausted ? encodeCursor({ kind: 't', start: first.t, anchor }) : null,
+  };
 }
 
 /** OI period for a chart timeframe: the largest supported period ≤ tf (min 5m), or null if no history. */
