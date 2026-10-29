@@ -74,12 +74,22 @@ export class RateLimitedError extends Error {
 export interface Limiter {
   /** Wait for budget (worker) or charge it (user requests). Throws RateLimitedError while the host is paused (user requests). */
   acquire(url: string): Promise<void>;
+  /**
+   * How many requests like `url` a bulk user job (a sub-minute backfill) may send now: what fits in
+   * half a minute's budget less what user requests already overspent; 0 while the host is paused.
+   */
+  affordable(url: string): number;
+  /** Forget all spending and pauses (test harnesses, between independent scenarios). */
+  reset(): void;
   /** Feed back an upstream response status (429 / 418 pause the host). */
   report(url: string, status: number, retryAfter: string | null): void;
   /** Run `fn` as background-worker work (it then waits for its share of the budget). */
   asWorker<T>(fn: () => Promise<T>): Promise<T>;
   stats(): Record<string, { rate: number; spentPerMin: number; paused: boolean; limited: number }>;
 }
+
+/** Bulk user jobs (backfills) may spend up to this share of a minute's budget at once. */
+const BULK_SHARE = 0.5;
 
 function createLimiter(): Limiter {
   const buckets = new Map<string, Bucket>();
@@ -138,6 +148,14 @@ function createLimiter(): Limiter {
         b.waiters.shift();
         b.waiters[0]?.();
       }
+    },
+    reset() { buckets.clear(); },
+    affordable(url) {
+      const b = bucket(url);
+      if (!b) return Infinity;
+      if (Date.now() < b.pausedUntil) return 0;
+      refill(b);
+      return Math.max(0, Math.floor((b.spec.rate * 60 * BULK_SHARE + b.tokens) / Math.max(1, weightOf(url, b))));
     },
     report(url, status, retryAfter) {
       if (status !== 429 && status !== 418) return;

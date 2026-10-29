@@ -67,6 +67,10 @@ server builds them from trades, exactly:
   reaches depends on the coin: hours on most coins, tens of minutes on the very busiest (which the
   recording covers). Bybit has no older trades: its history is the recording.
 - After a restart the downtime is a gap; the first open of a coin backfills it where it can.
+- Backfills never spend more than half a minute's upstream budget at once, and none while an
+  exchange is rate-limiting the server (429 / 418). If trades are unavailable the chart opens with
+  the recording (or just the newest trades); scrolling further back then pauses for 15 s — a
+  `[chart] older … history unavailable` warning in the browser console, never an error.
 
 OKX and Gate have their own sub-minute candles and aren't recorded.
 | `getMe failed (…) — will keep trying` / `polling: fetch failed` | No route to `api.telegram.org` | Check outbound HTTPS / firewall |

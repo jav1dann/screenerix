@@ -169,29 +169,35 @@ export async function getTrades(id: ExchangeId, base: string): Promise<RawTrade[
  * ends the backfill there (a hole in the trades would make wrong candles). `reachedStart`: there
  * are no older trades (id 0, or an empty page — ids are contiguous).
  */
-async function backfillById(id: ExchangeId, meta: InstrumentMeta, firstId: number, until: number, maxPages: number): Promise<{ trades: RawTrade[]; reachedStart: boolean }> {
+async function backfillById(id: ExchangeId, meta: InstrumentMeta, firstId: number, until: number, wantPages: number): Promise<{ trades: RawTrade[]; reachedStart: boolean; complete: boolean }> {
   const rest = ADAPTERS[id].rest;
+  // Never more than the upstream budget affords right now (none while the venue rate-limits us).
+  const maxPages = Math.min(wantPages, limiter().affordable(rest.tradesFromIdUrl!(meta, firstId)));
   let out: RawTrade[] = [];
+  const done = (reachedStart: boolean) => ({ trades: out, reachedStart, complete: reachedStart || (out[0]?.t ?? Infinity) <= until });
   for (let k = 1; k <= maxPages; k += BACKFILL_BATCH) {
     const ks = Array.from({ length: Math.min(BACKFILL_BATCH, maxPages - k + 1) }, (_, i) => k + i).filter((x) => firstId - (x - 1) * 1_000 > 0);
-    if (!ks.length) return { trades: out, reachedStart: true };
+    if (!ks.length) return done(true);
     const pages = await Promise.all(ks.map((x) => upstreamJson(rest.tradesFromIdUrl!(meta, Math.max(0, firstId - x * 1_000))).then((j) => rest.parseTrades(j), () => null)));
     for (let i = 0; i < pages.length; i++) {
       const lo = Math.max(0, firstId - ks[i] * 1_000), hi = firstId - (ks[i] - 1) * 1_000;
       const page = pages[i]?.filter((t) => Number(t.id) >= lo && Number(t.id) < hi);
       // Ids are contiguous: an empty page (fetched fine) means no older trades exist; a failed one doesn't.
-      if (!page?.length) return { trades: out, reachedStart: !!page };
+      if (!page) { console.warn(`[market] ${ADAPTERS[id].name} trade backfill stopped: a page failed`); return done(false); }
+      if (!page.length) return done(true);
       out = [...page, ...out];
-      if (lo === 0) return { trades: out, reachedStart: true };
-      if (page[0].t <= until) return { trades: out, reachedStart: false };
+      if (lo === 0) return done(true);
+      if (page[0].t <= until) return done(false);
     }
   }
-  return { trades: out, reachedStart: false };
+  return done(false);
 }
 
 /** First-load backfill on venues with sequential trade ids: pages of 1000 trades, fetched in parallel batches. */
 const BACKFILL_PAGES: Record<SubMinute, number> = { '30s': 36, '1s': 8 };
 const BACKFILL_BATCH = 6;
+/** Pages per scroll-back request (one per user gesture). */
+const BACKFILL_OLDER_PAGES = 12;
 
 const SUB_MINUTE: Record<SubMinute, { bars: number; pages: number }> = {
   '1s': { bars: 600, pages: 3 },
@@ -292,7 +298,19 @@ async function loadSubMinute(id: ExchangeId, base: string, tf: SubMinute, cursor
 
   // Trades: the newest page (first load) or the pages before the cursor, oldest first.
   const older = cursor?.kind === 't' ? cursor : null;
-  let trades = older ? [] : rest.parseTrades(await upstreamJson(rest.tradesUrl(meta)));
+  let trades: RawTrade[] = [];
+  if (!older) {
+    try {
+      trades = rest.parseTrades(await upstreamJson(rest.tradesUrl(meta)));
+    } catch (e) {
+      // Trades unavailable (e.g. rate-limited): the recording, if there is one, rather than an error.
+      const rec = recordedCandles(id, base, tf, Infinity, bars);
+      if (!rec.length) throw e;
+      console.warn(`[market] ${ADAPTERS[id].name} ${base} ${tf}: trades unavailable (${(e as Error).message}) — serving the recording`);
+      const head = rec[0];
+      return { candles: rec, asOf: rec[rec.length - 1].t + span, cursor: recordedCandles(id, base, tf, head.t, 1).length ? encodeCursor({ kind: 'r', before: head.t }) : null };
+    }
+  }
   const seen = new Set(trades.flatMap((t) => (t.id ? [t.id] : [])));
   let exhausted = !rest.olderTradesUrl;
   // First load: what the recording doesn't cover yet is backfilled from older trades, all pages
@@ -302,6 +320,8 @@ async function loadSubMinute(id: ExchangeId, base: string, tf: SubMinute, cursor
   const covered = recordedFrom !== undefined && (recordedFrom <= newestT - want + span || wasBackfilled(id, base, tf));
   const firstId = Number(trades[0]?.id);
   let budget = older ? pages : covered ? 1 : pages;
+  /** The backfill reached as far back as it set out to (a failed / budget-capped one is redone next time). */
+  let backfillComplete = !older && !covered;
   if (!older && !covered && rest.tradesFromIdUrl && Number.isInteger(firstId) && firstId > 0) {
     // Only the pages the window needs at this coin's trade rate (from the newest page), up to the budget.
     const pageSpan = Math.max(1, newestT - trades[0].t);
@@ -310,12 +330,13 @@ async function loadSubMinute(id: ExchangeId, base: string, tf: SubMinute, cursor
     back.trades.forEach((t) => seen.add(t.id!));
     trades = [...back.trades, ...trades];
     exhausted = back.reachedStart;
+    backfillComplete = back.complete || needed > BACKFILL_PAGES[tf] && back.trades.length >= BACKFILL_PAGES[tf] * 1_000;
     budget = 1; // paged here
   }
   // Scrolling back on the same venues: one large chunk, pages in parallel too.
   const anchorId = Number(older?.anchor.id);
   if (older && rest.tradesFromIdUrl && Number.isInteger(anchorId) && anchorId > 0) {
-    const back = await backfillById(id, meta, anchorId, older.start - want, BACKFILL_PAGES[tf]);
+    const back = await backfillById(id, meta, anchorId, older.start - want, BACKFILL_OLDER_PAGES);
     if (!back.trades.length && !back.reachedStart) throw new UpstreamError(`${ADAPTERS[id].name} trades unavailable`, 502);
     back.trades.forEach((t) => seen.add(t.id!));
     trades = back.trades;
@@ -350,7 +371,7 @@ async function loadSubMinute(id: ExchangeId, base: string, tf: SubMinute, cursor
       const all = candlesFromTrades(scaled, sp, Infinity);
       const closed = (exhausted ? all : all.slice(1)).filter((c) => c.t + sp <= asOf);
       // This request backfilled as deep as `tf` needs; that covers `t` too only if `t` needs no more.
-      const complete = !covered && BACKFILL_PAGES[tf] >= BACKFILL_PAGES[t];
+      const complete = backfillComplete && BACKFILL_PAGES[tf] >= BACKFILL_PAGES[t];
       recordBackfill(id, base, meta, t, closed, complete);
     }
   }

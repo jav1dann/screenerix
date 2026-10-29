@@ -26,6 +26,8 @@ const SEED_LIMIT = 300;
 export const FULL_HISTORY = 1_000;
 /** Candles per scroll-back page. */
 const OLDER_PAGE = 500;
+/** Pause after a failed scroll-back page. */
+const OLDER_RETRY_MS = 15_000;
 /** 1m candles kept for range stats — enough for the longest window (4h). */
 const MINUTE_SEED = Math.max(...Object.values(RANGE_MINUTES));
 const RELEASE_DELAY_MS = 2_000; // survive quick unmount/remount (StrictMode, tab switches)
@@ -124,6 +126,8 @@ function createChartStream(key: ChartKey): ChartStream & { dispose(): void } {
   // Grows when older history is prepended, so live bars don't trim what was loaded.
   let maxCandles = isSubMinute(tf) ? 2_000 : 1_000;
   let olderReq: Promise<boolean> | null = null;
+  /** After a failed older page: no new attempt before this. */
+  let olderPausedUntil = 0;
   /** History size the seed loads: grows to what the largest chart on this stream asked for. */
   let wanted = SEED_LIMIT;
   /** Waiting for the load to settle (ready / unlisted / error). */
@@ -366,7 +370,7 @@ function createChartStream(key: ChartKey): ChartStream & { dispose(): void } {
       };
     },
     loadOlder(count = OLDER_PAGE) {
-      if (status !== 'ready' || historyStart || !candles.length) return Promise.resolve(false);
+      if (status !== 'ready' || historyStart || !candles.length || Date.now() < olderPausedUntil) return Promise.resolve(false);
       if (olderReq) return olderReq;
       const g = gen;
       const page: Promise<RawCandle[]> = isSubMinute(tf)
@@ -385,6 +389,13 @@ function createChartStream(key: ChartKey): ChartStream & { dispose(): void } {
           emit({ type: 'reset', candles });
           emitter.notify();
           return true;
+        })
+        // Never rejects: older history is optional (a rate-limited venue, a failed page) — the chart
+        // keeps what it has, and older loading pauses briefly instead of retrying at every scroll.
+        .catch((e: unknown) => {
+          console.warn(`[chart] older ${symbol} ${tf} history unavailable: ${e instanceof Error ? e.message : String(e)}`);
+          olderPausedUntil = Date.now() + OLDER_RETRY_MS;
+          return false;
         })
         .finally(() => { olderReq = null; });
       return olderReq;

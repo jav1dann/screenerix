@@ -19,6 +19,7 @@ import type { ChartTimeframe, RawCandle, SubMinute } from '@/lib/market/exchange
 import { aggregate, applyTrade, trimPartialHead } from '@/lib/market/exchanges/shared';
 import { getKlines, getSubMinuteCandles, lookupInstrument } from '@/lib/market/server/marketData';
 import { recordedCandles, saveRecordings, startTradeRecorder, trackTrades } from '@/lib/market/server/tradeRecorder';
+import { limiter } from '@/lib/server/scan/limiter';
 import { CHART_TIMEFRAMES } from '@/components/chart/expanded/ExpandedHeader';
 
 const results: string[] = [];
@@ -79,6 +80,8 @@ const MINUTES: RawCandle[] = [];
 }
 let bybitKlineRequests = 0;
 let bkfRequests = 0;
+let bkfDown = false;
+const aggRequests = new Map<string, number>();
 let quietRequests = 0;
 /** A quiet coin: one trade every 20 s for 12 h (aggTrades format). */
 const QUIET: Array<{ a: number; p: string; q: string; T: number; m: boolean }> = [];
@@ -90,11 +93,15 @@ globalThis.fetch = (async (input: string | URL | Request) => {
   const q = u.searchParams;
   switch (`${u.hostname}${u.pathname}`) {
     case 'fapi.binance.com/fapi/v1/exchangeInfo':
-      return json({ symbols: ['TEST', 'REC', 'BKF', 'GAP', 'ONE', 'QUIET'].map((b) => ({ status: 'TRADING', contractType: 'PERPETUAL', quoteAsset: 'USDT', baseAsset: b, symbol: `${b}USDT` })) });
+      return json({ symbols: ['TEST', 'REC', 'BKF', 'GAP', 'ONE', 'QUIET', 'CAPA', 'CAPB', 'LIM'].map((b) => ({ status: 'TRADING', contractType: 'PERPETUAL', quoteAsset: 'USDT', baseAsset: b, symbol: `${b}USDT` })) });
     case 'fapi.binance.com/fapi/v1/aggTrades':
       // REC: only the newest 300 trades (30 s) and nothing older — like a busy coin on a venue whose trades don't page far.
       if (q.get('symbol') === 'RECUSDT') return json(q.has('fromId') ? [] : binanceAgg(TRADES[TRADES.length - 300].id));
       if (q.get('symbol') === 'BKFUSDT') bkfRequests++;
+      aggRequests.set(q.get('symbol')!, (aggRequests.get(q.get('symbol')!) ?? 0) + 1);
+      // LIM: older pages are rate-limited (Binance's 429); BKF: everything fails while `bkfDown`.
+      if (q.get('symbol') === 'LIMUSDT' && q.has('fromId')) return new Response(JSON.stringify({ code: -1003, msg: 'Too many requests' }), { status: 429, headers: { 'retry-after': '30' } });
+      if (q.get('symbol') === 'BKFUSDT' && bkfDown) return new Response(JSON.stringify({ code: -1003, msg: 'Too many requests' }), { status: 503 });
       if (q.get('symbol') === 'QUIETUSDT') {
         quietRequests++;
         const from = q.has('fromId') ? Number(q.get('fromId')) : QUIET[QUIET.length - 1000].a;
@@ -142,6 +149,7 @@ globalThis.fetch = (async (input: string | URL | Request) => {
 async function subMinute(venue: 'binance' | 'okx' | 'gate', tf: SubMinute, label: string, scrolls: number): Promise<void> {
   const span = TIMEFRAME_MS[tf];
   const T = tf === '30s' ? T30 : T1;
+  limiter().reset(); // each scenario starts with a fresh upstream budget
   const first = await getSubMinuteCandles(venue, 'TEST', tf);
   check(`${label}: first load has history`, first.candles.length >= 15, `${first.candles.length} candles`);
   const wrong = closed(first.candles, span).filter((c) => !sameCandle(c, T.get(c.t)));
@@ -152,6 +160,7 @@ async function subMinute(venue: 'binance' | 'okx' | 'gate', tf: SubMinute, label
   let cursor = first.cursor;
   let joined = true, exact = true, pagesLoaded = 0;
   for (let i = 0; i < scrolls && cursor; i++) {
+    limiter().reset(); // a user scrolls a while apart: the budget has refilled
     const page = await getSubMinuteCandles(venue, 'TEST', tf, cursor);
     cursor = page.cursor;
     if (!page.candles.length) continue;
@@ -258,6 +267,7 @@ async function backfill(): Promise<void> {
   const resolve = (b: string) => lookupInstrument('binance', b);
   let stop = startTradeRecorder('binance', resolve, () => [], 0);
   const span = 30_000;
+  limiter().reset();
   const exact = (cs: RawCandle[], T: Map<number, RawCandle>, sp: number) => closed(cs, sp).every((c) => sameCandle(c, T.get(c.t)));
 
   const first = await getSubMinuteCandles('binance', 'BKF', '30s');
@@ -282,6 +292,7 @@ async function backfill(): Promise<void> {
   const failedFrom = TRADES.find((x) => x.id === TRADES[TRADES.length - 1000].id - 3_000)!.t;
   check('a failed backfill page: history stops there — exact candles, none spanning the hole', exact(gap.candles, T30, span) && gap.candles[0].t >= failedFrom, `${gap.candles.length} candles from ${new Date(gap.candles[0].t).toISOString().slice(11, 19)}`);
 
+  limiter().reset();
   // 1s opened first (small backfill: 10 min of 1s), then 30s: 30s must still get its own, deeper backfill.
   const one1 = await getSubMinuteCandles('binance', 'ONE', '1s');
   const one30 = await getSubMinuteCandles('binance', 'ONE', '30s');
@@ -292,6 +303,32 @@ async function backfill(): Promise<void> {
   const quiet = await getSubMinuteCandles('binance', 'QUIET', '30s');
   const qh = (quiet.candles.at(-1)!.t - quiet.candles[0].t) / 3_600_000;
   check('quiet coin: the full 6 h window from a couple of requests (budget fits the trade rate)', qh >= 5.9 && quietRequests <= 4, `${qh.toFixed(1)} h, ${quiet.candles.length} candles, ${quietRequests} requests`);
+
+  // The newest trades page fails (rate-limited): the recording is served, not an error.
+  await sleep(5_100);
+  bkfDown = true;
+  const down = await getSubMinuteCandles('binance', 'BKF', '30s').catch((e: Error) => e);
+  bkfDown = false;
+  check('trades unavailable: the recorded candles are served instead of an error', !(down instanceof Error) && down.candles.length >= rec30.length - 2 && exact(down.candles, T30, span), down instanceof Error ? down.message : `${down.candles.length} candles`);
+
+  // Upstream budget: back-to-back cold coins can't overrun it.
+  limiter().reset();
+  await getSubMinuteCandles('binance', 'CAPA', '30s');
+  const capB = await getSubMinuteCandles('binance', 'CAPB', '30s');
+  const [a, bReq] = [aggRequests.get('CAPAUSDT') ?? 0, aggRequests.get('CAPBUSDT') ?? 0];
+  check('back-to-back backfills: the second is capped by the remaining budget (weight 20 each)', a === 37 && bReq < 37 && capB.candles.length > 0, `CAPA ${a} requests, CAPB ${bReq} requests (${capB.candles.length} candles)`);
+  limiter().reset();
+  await sleep(5_100);
+  const before = aggRequests.get('CAPBUSDT') ?? 0;
+  await getSubMinuteCandles('binance', 'CAPB', '30s');
+  check('…a capped backfill isn’t marked done: the next open completes it', (aggRequests.get('CAPBUSDT') ?? 0) - before > 1, `${(aggRequests.get('CAPBUSDT') ?? 0) - before} requests on the next open`);
+
+  // Older pages rate-limited (429): the chart still opens with the newest trades; the venue is paused.
+  limiter().reset();
+  const lim = await getSubMinuteCandles('binance', 'LIM', '30s').catch((e: Error) => e);
+  check('older pages answer 429: the chart still opens (newest trades), no error', !(lim instanceof Error) && lim.candles.length > 0 && exact(lim.candles, T30, span), lim instanceof Error ? lim.message : `${lim.candles.length} candles`);
+  check('…and backfills pause (no budget while rate-limited)', limiter().affordable('https://fapi.binance.com/fapi/v1/aggTrades?symbol=XUSDT&fromId=1&limit=1000') === 0);
+  limiter().reset();
 
   // Restart: saved to the data directory, loaded by the next recorder.
   await saveRecordings();
