@@ -41,6 +41,8 @@ function bucketFor(u: URL): { key: string; spec: BucketSpec } | null {
             if (x.pathname.endsWith('/klines')) return bnKlines(n(x, 'limit', 500));
             if (x.pathname.endsWith('/ticker/24hr')) return x.searchParams.has('symbol') ? 1 : 40;
             if (x.pathname.endsWith('/premiumIndex')) return x.searchParams.has('symbol') ? 1 : 10;
+            // Aggregate trades are expensive (sub-minute backfills page through many of them).
+            if (x.pathname.endsWith('/aggTrades')) return 20;
             return 1;
           },
         },

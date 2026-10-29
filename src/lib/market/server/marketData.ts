@@ -166,7 +166,8 @@ export async function getTrades(id: ExchangeId, base: string): Promise<RawTrade[
 /**
  * Trades before id `firstId` (oldest first) back to time `until`, in pages of 1000 addressed by id,
  * fetched `BACKFILL_BATCH` at a time. Only pages contiguous with `firstId` are kept: a failed page
- * ends the backfill there (a hole in the trades would make wrong candles). `reachedStart`: id 0.
+ * ends the backfill there (a hole in the trades would make wrong candles). `reachedStart`: there
+ * are no older trades (id 0, or an empty page — ids are contiguous).
  */
 async function backfillById(id: ExchangeId, meta: InstrumentMeta, firstId: number, until: number, maxPages: number): Promise<{ trades: RawTrade[]; reachedStart: boolean }> {
   const rest = ADAPTERS[id].rest;
@@ -178,7 +179,8 @@ async function backfillById(id: ExchangeId, meta: InstrumentMeta, firstId: numbe
     for (let i = 0; i < pages.length; i++) {
       const lo = Math.max(0, firstId - ks[i] * 1_000), hi = firstId - (ks[i] - 1) * 1_000;
       const page = pages[i]?.filter((t) => Number(t.id) >= lo && Number(t.id) < hi);
-      if (!page?.length) return { trades: out, reachedStart: lo === 0 && !!page };
+      // Ids are contiguous: an empty page (fetched fine) means no older trades exist; a failed one doesn't.
+      if (!page?.length) return { trades: out, reachedStart: !!page };
       out = [...page, ...out];
       if (lo === 0) return { trades: out, reachedStart: true };
       if (page[0].t <= until) return { trades: out, reachedStart: false };
@@ -188,7 +190,7 @@ async function backfillById(id: ExchangeId, meta: InstrumentMeta, firstId: numbe
 }
 
 /** First-load backfill on venues with sequential trade ids: pages of 1000 trades, fetched in parallel batches. */
-const BACKFILL_PAGES: Record<SubMinute, number> = { '30s': 24, '1s': 8 };
+const BACKFILL_PAGES: Record<SubMinute, number> = { '30s': 36, '1s': 8 };
 const BACKFILL_BATCH = 6;
 
 const SUB_MINUTE: Record<SubMinute, { bars: number; pages: number }> = {
@@ -301,11 +303,24 @@ async function loadSubMinute(id: ExchangeId, base: string, tf: SubMinute, cursor
   const firstId = Number(trades[0]?.id);
   let budget = older ? pages : covered ? 1 : pages;
   if (!older && !covered && rest.tradesFromIdUrl && Number.isInteger(firstId) && firstId > 0) {
-    const back = await backfillById(id, meta, firstId, newestT - want, BACKFILL_PAGES[tf]);
+    // Only the pages the window needs at this coin's trade rate (from the newest page), up to the budget.
+    const pageSpan = Math.max(1, newestT - trades[0].t);
+    const needed = Math.ceil(want / pageSpan) + 1;
+    const back = await backfillById(id, meta, firstId, newestT - want, Math.min(needed, BACKFILL_PAGES[tf]));
     back.trades.forEach((t) => seen.add(t.id!));
     trades = [...back.trades, ...trades];
     exhausted = back.reachedStart;
     budget = 1; // paged here
+  }
+  // Scrolling back on the same venues: one large chunk, pages in parallel too.
+  const anchorId = Number(older?.anchor.id);
+  if (older && rest.tradesFromIdUrl && Number.isInteger(anchorId) && anchorId > 0) {
+    const back = await backfillById(id, meta, anchorId, older.start - want, BACKFILL_PAGES[tf]);
+    if (!back.trades.length && !back.reachedStart) throw new UpstreamError(`${ADAPTERS[id].name} trades unavailable`, 502);
+    back.trades.forEach((t) => seen.add(t.id!));
+    trades = back.trades;
+    exhausted = back.reachedStart;
+    budget = 0; // paged here
   }
   for (let i = older ? 0 : 1; i < budget && rest.olderTradesUrl; i++) {
     const oldest = trades[0] ?? older?.anchor;

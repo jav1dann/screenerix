@@ -59,6 +59,8 @@ export interface ChartLevel { price: number; side: 'bid' | 'ask'; notional: numb
 const GOTO_MAX_PAGES = 20;
 /** Load the previous page when fewer bars than this remain left of the view. */
 const OLDER_EDGE_BARS = 20;
+/** Fewer bars than this aren't stretched to fill the view (a handful would become huge). */
+const MIN_FIT_BARS = 30;
 
 interface AdvancedChartProps {
   stream: ChartStream;
@@ -260,6 +262,11 @@ export default function AdvancedChart(props: AdvancedChartProps) {
       if (!alive) return;
       setAll(stream.getCandles());
       chart.timeScale().scrollToRealTime(); // jump to the live edge
+      // A history shorter than the view (sub-minute on a busy coin): fit it to the view — a full
+      // chart, no empty strip at the left edge (which would also invite loading more).
+      const n = stream.getCandles().length;
+      const view = chart.timeScale().getVisibleLogicalRange();
+      if (view && n >= MIN_FIT_BARS && view.from < 0) chart.timeScale().setVisibleLogicalRange({ from: 0, to: view.to });
       cb.current.onHistoryLoading?.(false);
       offData = stream.onData((e) => {
         if (e.type === 'reset') { setAll(e.candles); return; }
@@ -290,15 +297,15 @@ export default function AdvancedChart(props: AdvancedChartProps) {
       if (price !== null && price > 0) c.onAlertPick(price);
     };
     // Scrolled to the left edge: page in older history.
-    // Only after the user scrolls / zooms: a history shorter than the view (sub-minute) must not
-    // start pulling older pages in by itself — the chart shows what it opened with, in one go.
+    // Older history only for a user gesture (scroll / zoom to the left edge) — one page per gesture:
+    // never by itself, and a prepend (which moves the range) doesn't pull in the next one.
     let userMoved = false;
     const moved = () => { userMoved = true; };
     host.addEventListener('pointerdown', moved);
     host.addEventListener('wheel', moved, { passive: true });
     host.addEventListener('touchstart', moved, { passive: true });
     const onRange = (r: { from: number; to: number } | null) => {
-      if (userMoved && r && r.from < OLDER_EDGE_BARS) void stream.loadOlder();
+      if (userMoved && r && r.from < OLDER_EDGE_BARS) { userMoved = false; void stream.loadOlder(); }
     };
     chart.subscribeCrosshairMove(onMove);
     chart.subscribeClick(onClick);

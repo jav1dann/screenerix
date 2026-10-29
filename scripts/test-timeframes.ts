@@ -79,6 +79,10 @@ const MINUTES: RawCandle[] = [];
 }
 let bybitKlineRequests = 0;
 let bkfRequests = 0;
+let quietRequests = 0;
+/** A quiet coin: one trade every 20 s for 12 h (aggTrades format). */
+const QUIET: Array<{ a: number; p: string; q: string; T: number; m: boolean }> = [];
+for (let i = 0, t = NOW - 12 * 3_600_000; t < NOW - 1_000; i++, t += 20_000) QUIET.push({ a: 9_000_000 + i, p: String(50 + Math.sin(i / 40)), q: '1', T: t, m: i % 2 === 0 });
 
 globalThis.fetch = (async (input: string | URL | Request) => {
   requests++;
@@ -86,11 +90,16 @@ globalThis.fetch = (async (input: string | URL | Request) => {
   const q = u.searchParams;
   switch (`${u.hostname}${u.pathname}`) {
     case 'fapi.binance.com/fapi/v1/exchangeInfo':
-      return json({ symbols: ['TEST', 'REC', 'BKF', 'GAP', 'ONE'].map((b) => ({ status: 'TRADING', contractType: 'PERPETUAL', quoteAsset: 'USDT', baseAsset: b, symbol: `${b}USDT` })) });
+      return json({ symbols: ['TEST', 'REC', 'BKF', 'GAP', 'ONE', 'QUIET'].map((b) => ({ status: 'TRADING', contractType: 'PERPETUAL', quoteAsset: 'USDT', baseAsset: b, symbol: `${b}USDT` })) });
     case 'fapi.binance.com/fapi/v1/aggTrades':
       // REC: only the newest 300 trades (30 s) and nothing older — like a busy coin on a venue whose trades don't page far.
       if (q.get('symbol') === 'RECUSDT') return json(q.has('fromId') ? [] : binanceAgg(TRADES[TRADES.length - 300].id));
       if (q.get('symbol') === 'BKFUSDT') bkfRequests++;
+      if (q.get('symbol') === 'QUIETUSDT') {
+        quietRequests++;
+        const from = q.has('fromId') ? Number(q.get('fromId')) : QUIET[QUIET.length - 1000].a;
+        return json(QUIET.filter((x) => x.a >= from).slice(0, 1000));
+      }
       // GAP: the third page back fails (the backfill must stop there, not leave a hole).
       if (q.get('symbol') === 'GAPUSDT' && q.has('fromId') && Number(q.get('fromId')) === TRADES[TRADES.length - 1000].id - 3_000) return new Response('busy', { status: 503 });
       return json(q.has('fromId') ? binanceAgg(Number(q.get('fromId'))) : binanceAgg(TRADES[TRADES.length - 1000].id));
@@ -255,7 +264,7 @@ async function backfill(): Promise<void> {
   const minutes = (first.candles.at(-1)!.t - first.candles[0].t) / 60_000;
   check('cold coin (never recorded): 30s opens with backfilled history', first.candles.length >= 80, `${first.candles.length} candles (${minutes.toFixed(0)} min) from ${bkfRequests} upstream requests`);
   check('…every candle exact', exact(first.candles, T30, span));
-  check('…within the backfill budget (1 + 24 pages)', bkfRequests <= 25);
+  check('…within the backfill budget (1 + 36 pages)', bkfRequests <= 37);
   const rec30 = recordedCandles('binance', 'BKF', '30s');
   const rec1 = recordedCandles('binance', 'BKF', '1s');
   check('the backfill is recorded: 30s', rec30.length >= 80 && rec30.every((c) => sameCandle(c, T30.get(c.t))), `${rec30.length} candles`);
@@ -278,6 +287,11 @@ async function backfill(): Promise<void> {
   const one30 = await getSubMinuteCandles('binance', 'ONE', '30s');
   const m30 = (one30.candles.at(-1)!.t - one30.candles[0].t) / 60_000;
   check('1s opened first, then 30s: 30s still gets its full backfill', one1.candles.length === 600 && one30.candles.length >= first.candles.length - 2 && exact(one30.candles, T30, span), `1s ${one1.candles.length} candles; 30s ${one30.candles.length} candles (${m30.toFixed(0)} min) vs ${first.candles.length} when opened first`);
+
+  // A quiet coin: the newest page already spans hours — only the pages the 6 h window needs.
+  const quiet = await getSubMinuteCandles('binance', 'QUIET', '30s');
+  const qh = (quiet.candles.at(-1)!.t - quiet.candles[0].t) / 3_600_000;
+  check('quiet coin: the full 6 h window from a couple of requests (budget fits the trade rate)', qh >= 5.9 && quietRequests <= 4, `${qh.toFixed(1)} h, ${quiet.candles.length} candles, ${quietRequests} requests`);
 
   // Restart: saved to the data directory, loaded by the next recorder.
   await saveRecordings();

@@ -61,7 +61,8 @@ server builds them from trades, exactly:
   (kept 6 h), are recorded from the trade streams — up to 6 h of 30s and 15 min of 1s. The 30s
   recording is saved to `SX_DATA_DIR/subminute/` every 2 min and reloaded on start.
 - **Backfill:** a coin opened before it was recorded is backfilled from REST trades on the spot —
-  Binance / Coinbase: up to 24 pages of 1000 trades in parallel; Bitget: 6 pages in a row — and the
+  Binance / Coinbase: as many pages of 1000 trades as the 6 h window needs at the coin's trade
+  rate, up to 36, in parallel (each counted at Binance's weight 20); Bitget: 6 pages in a row — and the
   result joins the recording, so every later open (30s or 1s) is instant. How far back that
   reaches depends on the coin: hours on most coins, tens of minutes on the very busiest (which the
   recording covers). Bybit has no older trades: its history is the recording.
