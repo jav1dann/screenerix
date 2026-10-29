@@ -1,0 +1,639 @@
+{
+ "fps": 60,
+ "duration_s": 30.0,
+ "frames": 1800,
+ "vo_file": "video-assets/audio/launch-voiceover-tightened.wav",
+ "vo_offset_s": 0.5,
+ "source_vo": "video-assets/audio/launch-voiceover.mp3",
+ "source_duration_s": 29.071,
+ "cuts_in_source_s": [
+  [
+   2.572,
+   2.812
+  ],
+  [
+   5.79,
+   6.09
+  ],
+  [
+   10.22,
+   10.35
+  ],
+  [
+   18.178,
+   18.408
+  ],
+  [
+   21.715,
+   22.215
+  ]
+ ],
+ "phrases": [
+  {
+   "id": "L01",
+   "text": "Thousands of coins.",
+   "src_start": 0.0,
+   "src_end": 1.13,
+   "start_s": 0.5,
+   "end_s": 1.63,
+   "f_in": 30,
+   "f_out": 98,
+   "pause_before_s": null
+  },
+  {
+   "id": "L02",
+   "text": "Six exchanges.",
+   "src_start": 1.22,
+   "src_end": 2.26,
+   "start_s": 1.72,
+   "end_s": 2.76,
+   "f_in": 103,
+   "f_out": 166,
+   "pause_before_s": 0.09
+  },
+  {
+   "id": "L03",
+   "text": "One question:",
+   "src_start": 3.1,
+   "src_end": 4.0,
+   "start_s": 3.36,
+   "end_s": 4.26,
+   "f_in": 202,
+   "f_out": 256,
+   "pause_before_s": 0.6
+  },
+  {
+   "id": "L04",
+   "text": "where's the move?",
+   "src_start": 4.47,
+   "src_end": 5.32,
+   "start_s": 4.73,
+   "end_s": 5.58,
+   "f_in": 284,
+   "f_out": 335,
+   "pause_before_s": 0.47
+  },
+  {
+   "id": "L05",
+   "text": "Screenerix turns the noise into a map.",
+   "src_start": 6.52,
+   "src_end": 8.17,
+   "start_s": 6.48,
+   "end_s": 8.13,
+   "f_in": 389,
+   "f_out": 488,
+   "pause_before_s": 0.9
+  },
+  {
+   "id": "L06",
+   "text": "Every market, live.",
+   "src_start": 8.64,
+   "src_end": 9.97,
+   "start_s": 8.6,
+   "end_s": 9.93,
+   "f_in": 516,
+   "f_out": 596,
+   "pause_before_s": 0.47
+  },
+  {
+   "id": "L07",
+   "text": "Ranked as it moves.",
+   "src_start": 10.58,
+   "src_end": 11.66,
+   "start_s": 10.41,
+   "end_s": 11.49,
+   "f_in": 625,
+   "f_out": 689,
+   "pause_before_s": 0.48
+  },
+  {
+   "id": "L08",
+   "text": "Order book walls.",
+   "src_start": 12.13,
+   "src_end": 13.07,
+   "start_s": 11.96,
+   "end_s": 12.9,
+   "f_in": 718,
+   "f_out": 774,
+   "pause_before_s": 0.47
+  },
+  {
+   "id": "L09",
+   "text": "Sized.",
+   "src_start": 13.21,
+   "src_end": 13.8,
+   "start_s": 13.04,
+   "end_s": 13.63,
+   "f_in": 782,
+   "f_out": 818,
+   "pause_before_s": 0.14
+  },
+  {
+   "id": "L10",
+   "text": "Tracked.",
+   "src_start": 13.99,
+   "src_end": 14.58,
+   "start_s": 13.82,
+   "end_s": 14.39,
+   "f_in": 829,
+   "f_out": 863,
+   "pause_before_s": 0.19
+  },
+  {
+   "id": "L11",
+   "text": "Timed.",
+   "src_start": 14.84,
+   "src_end": 15.43,
+   "start_s": 14.67,
+   "end_s": 15.26,
+   "f_in": 880,
+   "f_out": 916,
+   "pause_before_s": 0.28
+  },
+  {
+   "id": "L12",
+   "text": "A volume spike, caught as it starts.",
+   "src_start": 15.87,
+   "src_end": 17.87,
+   "start_s": 15.7,
+   "end_s": 17.7,
+   "f_in": 942,
+   "f_out": 1062,
+   "pause_before_s": 0.44
+  },
+  {
+   "id": "L13",
+   "text": "A setup, from forming\u2026",
+   "src_start": 18.7,
+   "src_end": 20.1,
+   "start_s": 18.29,
+   "end_s": 19.7,
+   "f_in": 1097,
+   "f_out": 1182,
+   "pause_before_s": 0.59
+  },
+  {
+   "id": "L14",
+   "text": "\u2026to active.",
+   "src_start": 20.55,
+   "src_end": 21.23,
+   "start_s": 20.15,
+   "end_s": 20.83,
+   "f_in": 1209,
+   "f_out": 1250,
+   "pause_before_s": 0.45
+  },
+  {
+   "id": "L15",
+   "text": "The moment it matters, you'll know.",
+   "src_start": 22.68,
+   "src_end": 24.03,
+   "start_s": 21.79,
+   "end_s": 23.13,
+   "f_in": 1307,
+   "f_out": 1388,
+   "pause_before_s": 0.96
+  },
+  {
+   "id": "L16",
+   "text": "The market moves in seconds.",
+   "src_start": 24.53,
+   "src_end": 26.0,
+   "start_s": 23.63,
+   "end_s": 25.1,
+   "f_in": 1418,
+   "f_out": 1506,
+   "pause_before_s": 0.5
+  },
+  {
+   "id": "L17",
+   "text": "So should you.",
+   "src_start": 26.38,
+   "src_end": 26.98,
+   "start_s": 25.48,
+   "end_s": 26.08,
+   "f_in": 1529,
+   "f_out": 1565,
+   "pause_before_s": 0.38
+  },
+  {
+   "id": "L18",
+   "text": "Screenerix.",
+   "src_start": 27.75,
+   "src_end": 28.73,
+   "start_s": 26.85,
+   "end_s": 27.83,
+   "f_in": 1611,
+   "f_out": 1670,
+   "pause_before_s": 0.77
+  }
+ ],
+ "words": [
+  {
+   "w": "thousands",
+   "start_s": 0.5,
+   "end_s": 1.0,
+   "f_in": 30,
+   "f_out": 60
+  },
+  {
+   "w": "of",
+   "start_s": 1.0,
+   "end_s": 1.07,
+   "f_in": 60,
+   "f_out": 64
+  },
+  {
+   "w": "coins",
+   "start_s": 1.07,
+   "end_s": 1.63,
+   "f_in": 64,
+   "f_out": 98
+  },
+  {
+   "w": "six",
+   "start_s": 1.72,
+   "end_s": 2.07,
+   "f_in": 103,
+   "f_out": 124
+  },
+  {
+   "w": "exchanges",
+   "start_s": 2.07,
+   "end_s": 2.76,
+   "f_in": 124,
+   "f_out": 166
+  },
+  {
+   "w": "one",
+   "start_s": 3.36,
+   "end_s": 3.63,
+   "f_in": 202,
+   "f_out": 218
+  },
+  {
+   "w": "question",
+   "start_s": 3.63,
+   "end_s": 4.26,
+   "f_in": 218,
+   "f_out": 256
+  },
+  {
+   "w": "where's",
+   "start_s": 4.73,
+   "end_s": 5.12,
+   "f_in": 284,
+   "f_out": 307
+  },
+  {
+   "w": "the",
+   "start_s": 5.12,
+   "end_s": 5.2,
+   "f_in": 307,
+   "f_out": 312
+  },
+  {
+   "w": "move",
+   "start_s": 5.2,
+   "end_s": 5.58,
+   "f_in": 312,
+   "f_out": 335
+  },
+  {
+   "w": "screenerix",
+   "start_s": 6.48,
+   "end_s": 6.94,
+   "f_in": 389,
+   "f_out": 416
+  },
+  {
+   "w": "turns",
+   "start_s": 6.94,
+   "end_s": 7.17,
+   "f_in": 416,
+   "f_out": 430
+  },
+  {
+   "w": "the",
+   "start_s": 7.17,
+   "end_s": 7.23,
+   "f_in": 430,
+   "f_out": 434
+  },
+  {
+   "w": "noise",
+   "start_s": 7.23,
+   "end_s": 7.51,
+   "f_in": 434,
+   "f_out": 451
+  },
+  {
+   "w": "into",
+   "start_s": 7.51,
+   "end_s": 7.68,
+   "f_in": 451,
+   "f_out": 461
+  },
+  {
+   "w": "a",
+   "start_s": 7.68,
+   "end_s": 7.72,
+   "f_in": 461,
+   "f_out": 463
+  },
+  {
+   "w": "map",
+   "start_s": 7.72,
+   "end_s": 8.13,
+   "f_in": 463,
+   "f_out": 488
+  },
+  {
+   "w": "every",
+   "start_s": 8.6,
+   "end_s": 8.86,
+   "f_in": 516,
+   "f_out": 532
+  },
+  {
+   "w": "market",
+   "start_s": 8.86,
+   "end_s": 9.32,
+   "f_in": 532,
+   "f_out": 559
+  },
+  {
+   "w": "live",
+   "start_s": 9.41,
+   "end_s": 9.93,
+   "f_in": 565,
+   "f_out": 596
+  },
+  {
+   "w": "ranked",
+   "start_s": 10.41,
+   "end_s": 10.83,
+   "f_in": 625,
+   "f_out": 650
+  },
+  {
+   "w": "as",
+   "start_s": 10.83,
+   "end_s": 10.96,
+   "f_in": 650,
+   "f_out": 658
+  },
+  {
+   "w": "it",
+   "start_s": 10.96,
+   "end_s": 11.05,
+   "f_in": 658,
+   "f_out": 663
+  },
+  {
+   "w": "moves",
+   "start_s": 11.05,
+   "end_s": 11.49,
+   "f_in": 663,
+   "f_out": 689
+  },
+  {
+   "w": "order",
+   "start_s": 11.96,
+   "end_s": 12.25,
+   "f_in": 718,
+   "f_out": 735
+  },
+  {
+   "w": "book",
+   "start_s": 12.25,
+   "end_s": 12.45,
+   "f_in": 735,
+   "f_out": 747
+  },
+  {
+   "w": "walls",
+   "start_s": 12.45,
+   "end_s": 12.9,
+   "f_in": 747,
+   "f_out": 774
+  },
+  {
+   "w": "sized",
+   "start_s": 13.04,
+   "end_s": 13.63,
+   "f_in": 782,
+   "f_out": 818
+  },
+  {
+   "w": "tracked",
+   "start_s": 13.82,
+   "end_s": 14.39,
+   "f_in": 829,
+   "f_out": 863
+  },
+  {
+   "w": "timed",
+   "start_s": 14.67,
+   "end_s": 15.26,
+   "f_in": 880,
+   "f_out": 916
+  },
+  {
+   "w": "a",
+   "start_s": 15.7,
+   "end_s": 15.75,
+   "f_in": 942,
+   "f_out": 945
+  },
+  {
+   "w": "volume",
+   "start_s": 15.75,
+   "end_s": 16.22,
+   "f_in": 945,
+   "f_out": 973
+  },
+  {
+   "w": "spike",
+   "start_s": 16.22,
+   "end_s": 16.65,
+   "f_in": 973,
+   "f_out": 999
+  },
+  {
+   "w": "caught",
+   "start_s": 16.65,
+   "end_s": 16.98,
+   "f_in": 999,
+   "f_out": 1019
+  },
+  {
+   "w": "as",
+   "start_s": 16.98,
+   "end_s": 17.13,
+   "f_in": 1019,
+   "f_out": 1028
+  },
+  {
+   "w": "it",
+   "start_s": 17.13,
+   "end_s": 17.19,
+   "f_in": 1028,
+   "f_out": 1031
+  },
+  {
+   "w": "starts",
+   "start_s": 17.19,
+   "end_s": 17.7,
+   "f_in": 1031,
+   "f_out": 1062
+  },
+  {
+   "w": "a",
+   "start_s": 18.29,
+   "end_s": 18.35,
+   "f_in": 1097,
+   "f_out": 1101
+  },
+  {
+   "w": "setup",
+   "start_s": 18.35,
+   "end_s": 18.92,
+   "f_in": 1101,
+   "f_out": 1135
+  },
+  {
+   "w": "from",
+   "start_s": 18.92,
+   "end_s": 19.12,
+   "f_in": 1135,
+   "f_out": 1147
+  },
+  {
+   "w": "forming",
+   "start_s": 19.12,
+   "end_s": 19.7,
+   "f_in": 1147,
+   "f_out": 1182
+  },
+  {
+   "w": "to",
+   "start_s": 20.15,
+   "end_s": 20.36,
+   "f_in": 1209,
+   "f_out": 1222
+  },
+  {
+   "w": "active",
+   "start_s": 20.36,
+   "end_s": 20.83,
+   "f_in": 1222,
+   "f_out": 1250
+  },
+  {
+   "w": "the",
+   "start_s": 21.79,
+   "end_s": 21.88,
+   "f_in": 1307,
+   "f_out": 1313
+  },
+  {
+   "w": "moment",
+   "start_s": 21.88,
+   "end_s": 22.18,
+   "f_in": 1313,
+   "f_out": 1331
+  },
+  {
+   "w": "it",
+   "start_s": 22.18,
+   "end_s": 22.24,
+   "f_in": 1331,
+   "f_out": 1334
+  },
+  {
+   "w": "matters",
+   "start_s": 22.24,
+   "end_s": 22.7,
+   "f_in": 1334,
+   "f_out": 1362
+  },
+  {
+   "w": "you'll",
+   "start_s": 22.7,
+   "end_s": 22.84,
+   "f_in": 1362,
+   "f_out": 1370
+  },
+  {
+   "w": "know",
+   "start_s": 22.84,
+   "end_s": 23.13,
+   "f_in": 1370,
+   "f_out": 1388
+  },
+  {
+   "w": "the",
+   "start_s": 23.63,
+   "end_s": 23.7,
+   "f_in": 1418,
+   "f_out": 1422
+  },
+  {
+   "w": "market",
+   "start_s": 23.7,
+   "end_s": 24.12,
+   "f_in": 1422,
+   "f_out": 1447
+  },
+  {
+   "w": "moves",
+   "start_s": 24.12,
+   "end_s": 24.4,
+   "f_in": 1447,
+   "f_out": 1464
+  },
+  {
+   "w": "in",
+   "start_s": 24.4,
+   "end_s": 24.48,
+   "f_in": 1464,
+   "f_out": 1469
+  },
+  {
+   "w": "seconds",
+   "start_s": 24.48,
+   "end_s": 25.1,
+   "f_in": 1469,
+   "f_out": 1506
+  },
+  {
+   "w": "so",
+   "start_s": 25.48,
+   "end_s": 25.7,
+   "f_in": 1529,
+   "f_out": 1542
+  },
+  {
+   "w": "should",
+   "start_s": 25.7,
+   "end_s": 25.88,
+   "f_in": 1542,
+   "f_out": 1553
+  },
+  {
+   "w": "you",
+   "start_s": 25.88,
+   "end_s": 26.08,
+   "f_in": 1553,
+   "f_out": 1565
+  },
+  {
+   "w": "screenerix",
+   "start_s": 26.85,
+   "end_s": 27.83,
+   "f_in": 1611,
+   "f_out": 1670
+  }
+ ]
+}
