@@ -15,6 +15,7 @@ export const tr: Dict = {
     how: 'Nasıl çalışır',
     pricing: 'Fiyatlar',
     faq: 'SSS',
+    contact: 'İletişim',
     signIn: 'Giriş yap',
     register: 'Kayıt ol',
     openTerminal: 'Terminali aç',
@@ -111,6 +112,13 @@ export const tr: Dict = {
       { q: 'Borsa hesabımı bağlamam gerekiyor mu?', a: 'Hayır. Screenerix yalnızca herkese açık piyasa verileriyle çalışır. Hiçbir zaman borsa anahtarı istemez ve fonlarınıza erişmez.' },
       { q: 'Çalıştırmak için neye ihtiyacım var?', a: 'Modern bir masaüstü tarayıcı — Chrome, Edge, Firefox veya Safari. Terminal büyük ekranlar için tasarlanmıştır; site ve alarmlar mobilde de çalışır.' },
     ],
+  },
+  contact: {
+    kicker: 'İletişim',
+    title: 'Ekibimizle iletişime geçin',
+    subtitle: 'Terminal, faturalandırma veya bir ödeme hakkında sorunuz mu var? Bize doğrudan yazın — her mesajı bir insan okur.',
+    telegram: { label: 'Telegram', note: 'Bize ulaşmanın en hızlı yolu.', badge: 'En hızlı yanıt' },
+    email: { label: 'E-posta', note: 'Ayrıntılı talepler, faturalandırma ve iadeler için.' },
   },
   cta: {
     title: 'Piyasa saniyeler içinde hareket eder. Siz de öyle olmalısınız.',

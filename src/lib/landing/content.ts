@@ -14,6 +14,12 @@ export const PRICING = {
 } as const;
 export { yearlyPerMonth, yearlySavingPct };
 
+/** Support channels shown in the landing page's Contact section. */
+export const CONTACT = {
+  email: 'support@screenerix.com',
+  telegram: 'screenerix_support',
+} as const;
+
 /** Exchanges the terminal streams from (shown as wordmarks on the landing page). */
 export const EXCHANGE_NAMES = ['Binance', 'Bybit', 'OKX', 'Bitget', 'Gate', 'Coinbase'] as const;
 

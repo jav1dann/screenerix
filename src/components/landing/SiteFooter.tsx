@@ -24,6 +24,7 @@ export default function SiteFooter({ nav, t }: { nav: Dict['nav']; t: Dict['foot
           <a href="#how" className="lx-muted">{nav.how}</a>
           <a href="#pricing" className="lx-muted">{nav.pricing}</a>
           <a href="#faq" className="lx-muted">{nav.faq}</a>
+          <a href="#contact" className="lx-muted">{nav.contact}</a>
         </nav>
         <nav style={col} aria-label={t.legal} data-legal-links>
           <span style={colHead}>{t.legal}</span>

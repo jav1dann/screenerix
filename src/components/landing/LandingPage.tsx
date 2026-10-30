@@ -13,6 +13,7 @@ import type { Dict } from '@/lib/landing/i18n/en';
 import type { Locale } from '@/lib/landing/i18n/locales';
 import AuthModal from './AuthModal';
 import ClosingCta from './ClosingCta';
+import Contact from './Contact';
 import ExchangesStrip from './ExchangesStrip';
 import Faq from './Faq';
 import Features from './Features';
@@ -69,6 +70,7 @@ export default function LandingPage({ locale, dict, session, googleEnabled = fal
         <HowItWorks t={dict.how} />
         <Pricing t={dict.pricing} onSelect={onRegister} onSelectPro={onSelectPro} />
         <Faq t={dict.faq} />
+        <Contact t={dict.contact} />
         <ClosingCta t={dict.cta} onStart={onRegister} />
       </main>
       <SiteFooter nav={dict.nav} t={dict.footer} />

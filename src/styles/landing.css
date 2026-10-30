@@ -67,6 +67,10 @@
 /* Steps */
 .lx-step-num{width:34px;height:34px;border-radius:50%;display:grid;place-items:center;font-weight:700;font-size:14px;color:var(--sx-up);border:1px solid rgba(48,164,108,0.4);background:rgba(48,164,108,0.08)}
 /* FAQ */
+.lx-contact-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,300px),1fr));gap:16px}
+.lx-contact{color:inherit;text-decoration:none;min-width:0}
+.lx-contact-value{font-size:20px;font-weight:600;letter-spacing:-0.01em;overflow-wrap:anywhere}
+.lx-contact-badge{font-size:11px;font-weight:600;color:var(--sx-up);padding:3px 8px;border-radius:999px;background:rgba(48,164,108,0.12);border:1px solid rgba(48,164,108,0.32);white-space:nowrap}
 .lx-faq-wrap{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,2fr);gap:40px;align-items:start}
 @media (max-width:860px){.lx-faq-wrap{grid-template-columns:minmax(0,1fr)}}
 .lx-faq details{border-bottom:1px solid var(--sx-line)}

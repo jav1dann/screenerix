@@ -18,6 +18,7 @@ export const en = {
     how: 'How it works',
     pricing: 'Pricing',
     faq: 'FAQ',
+    contact: 'Contact',
     signIn: 'Sign in',
     register: 'Register',
     openTerminal: 'Open terminal',
@@ -114,6 +115,13 @@ export const en = {
       { q: 'Do I need to connect my exchange account?', a: 'No. Screenerix works on public market data only. It never asks for exchange keys and never touches your funds.' },
       { q: 'What do I need to run it?', a: 'A modern desktop browser — Chrome, Edge, Firefox or Safari. The terminal is built for large screens; the site and alerts also work on mobile.' },
     ],
+  },
+  contact: {
+    kicker: 'Contact',
+    title: 'Talk to the team',
+    subtitle: 'Questions about the terminal, billing or a payment? Write to us directly — every message is read by a person.',
+    telegram: { label: 'Telegram', note: 'The quickest way to reach us.', badge: 'Fastest response' },
+    email: { label: 'Email', note: 'For detailed requests, billing and refunds.' },
   },
   cta: {
     title: 'The market moves in seconds. So should you.',

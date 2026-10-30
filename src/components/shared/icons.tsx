@@ -44,4 +44,6 @@ export const IconLayers = () => <Icon size={20}><path d="M4 6h10" /><path d="M4 
 export const IconFilter = () => <Icon size={20}><path d="M3 5h18l-7 8.5V19l-4 2v-7.5z" /></Icon>;
 export const IconListExport = () => <Icon size={20}><path d="M3 6h11" /><path d="M3 12h7" /><path d="M3 18h7" /><path d="M17 10v10" /><path d="m13 16 4 4 4-4" /></Icon>;
 export const IconBolt = () => <Icon size={20}><path d="M13 2 4 14h7l-1 8 9-12h-7z" /></Icon>;
+export const IconMail = () => <Icon size={20}><rect width="20" height="16" x="2" y="4" rx="2" /><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7" /></Icon>;
+export const IconSend = () => <Icon size={20}><path d="M14.536 21.686a.5.5 0 0 0 .937-.024l6.5-19a.496.496 0 0 0-.635-.635l-19 6.5a.5.5 0 0 0-.024.937l7.93 3.18a2 2 0 0 1 1.112 1.11z" /><path d="m21.854 2.147-10.94 10.939" /></Icon>;
 export const IconGlobe = () => <Icon><circle cx="12" cy="12" r="10" /><path d="M2 12h20" /><path d="M12 2a15.3 15.3 0 0 1 0 20 15.3 15.3 0 0 1 0-20z" /></Icon>;

@@ -7,18 +7,19 @@ export interface LegalSection { id: string; heading: string; body: LegalBlock[] 
 export interface LegalDoc { slug: string; title: string; description: string; updated: string; intro: string; sections: LegalSection[] }
 
 const UPDATED = '24 October 2026';
-const ENTITY = '[Legal entity name]';
-const CONTACT = '[legal@your-domain.com]';
+const ENTITY = 'Screenerix';
+const CONTACT = 'support@screenerix.com';
+const ADDRESS = 'Baku, Azerbaijan';
 
 export const PRIVACY: LegalDoc = {
   slug: 'privacy',
   title: 'Privacy Policy',
   description: 'What personal data Screenerix collects, why, and the choices you have.',
   updated: UPDATED,
-  intro: `This policy explains how ${ENTITY} ("Screenerix", "we") handles personal data when you use the Screenerix website and trading terminal (the "Service"). We collect as little as we need to run the Service.`,
+  intro: `This policy explains how ${ENTITY} ("we") handles personal data when you use the Screenerix website and trading terminal (the "Service"). We collect as little as we need to run the Service.`,
   sections: [
     { id: 'controller', heading: 'Who is responsible', body: [
-      `${ENTITY}, [registered address], is the controller of your personal data. Contact: ${CONTACT}.`,
+      `${ENTITY}, ${ADDRESS}, is the controller of your personal data. Contact: ${CONTACT}.`,
     ] },
     { id: 'data', heading: 'Data we collect', body: [
       { list: [
@@ -104,7 +105,7 @@ export const TERMS: LegalDoc = {
       'You can stop using the Service and delete your account at any time. We may end or suspend access if you breach these Terms, with notice where reasonable.',
     ] },
     { id: 'law', heading: 'Governing law', body: [
-      'These Terms are governed by the laws of [jurisdiction], and disputes go to the courts of [city, country], unless the consumer law of your country gives you other rights.',
+      `These Terms are governed by the laws of [jurisdiction], and disputes go to the courts of ${ADDRESS}, unless the consumer law of your country gives you other rights.`,
     ] },
     { id: 'changes', heading: 'Changes and contact', body: [
       `We may update these Terms and will post the new version here. If a change is material, we will notify you in advance. Questions: ${CONTACT}.`,
