@@ -11,7 +11,7 @@ import { getCurrentUser } from '@/lib/auth/dal';
 import { isThrottled, recordFailure } from '@/lib/auth/throttle';
 import { findById } from '@/lib/auth/users';
 import { networkOf, isNetwork } from '@/lib/billing/networks';
-import type { NetworkId } from '@/lib/billing/networks';
+import type { Network, NetworkId } from '@/lib/billing/networks';
 import { insertOrder, newOrderId, ordersOf, toOrderView } from '@/lib/billing/orders';
 import type { Order, OrderView } from '@/lib/billing/orders';
 import { isPeriod, PERIODS } from '@/lib/billing/plans';
@@ -86,6 +86,15 @@ export async function quoteCrypto(period: Period, network: NetworkId): Promise<C
   }
 }
 
+/** What the customer sees when the provider refuses or can't be reached (the details go to the log). */
+function createOrderError(e: unknown, net: Network): string {
+  const err = e instanceof ProviderError ? e : null;
+  if (!err || err.code === 'UNREACHABLE') return 'The payment provider didn’t respond. Please try again in a moment.';
+  if (err.code === 'AMOUNT_MINIMAL_ERROR') return `This amount is below the payment provider’s minimum on ${net.name}. Please choose another network.`;
+  if (err.status === 401 || err.status === 403) return 'Crypto payments are temporarily unavailable. Please try again later.';
+  return 'The payment provider couldn’t create this order. Please try another network or retry shortly.';
+}
+
 /** Waiting inside its window, or funds seen (confirming / partly paid) in the last day. */
 const isOpen = (o: Order, now: number) =>
   o.status === 'waiting' ? o.expiresAt > now : (o.status === 'confirming' || o.status === 'partially_paid') && now - o.createdAt < DAY_MS;
@@ -118,8 +127,8 @@ export async function createCryptoOrder(period: Period, network: NetworkId): Pro
       description: `Screenerix Pro · ${PERIODS[period].label}`,
     });
   } catch (e) {
-    console.error(`[billing] create order on ${network} failed: ${(e as Error).message}`);
-    return { ok: false, error: 'The payment provider didn’t respond. Please try again in a moment.' };
+    console.error(`[billing] create order ${id} (${period}, $${priceUsd}) on ${network} failed: ${(e as Error).message}`);
+    return { ok: false, error: createOrderError(e, net) };
   }
   // Order creations count against the same 5-per-5-minutes budget as failed sign-ins.
   recordFailure(keys, now);

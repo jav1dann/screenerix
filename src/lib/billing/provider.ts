@@ -39,7 +39,20 @@ export interface PaymentProvider {
 export const WEBHOOK_PATH = '/api/payments/crypto/webhook';
 export const SIGNATURE_HEADER = 'x-nowpayments-sig';
 
-export class ProviderError extends Error {}
+/**
+ * A provider call that failed. `status` is the HTTP status when the provider answered;
+ * `code` is its error code (e.g. NOWPayments' `AMOUNT_MINIMAL_ERROR`), or `UNREACHABLE` when
+ * it didn't answer at all (network error / timeout).
+ */
+export class ProviderError extends Error {
+  status?: number;
+  code?: string;
+  constructor(message: string, info: { status?: number; code?: string } = {}) {
+    super(message);
+    this.status = info.status;
+    this.code = info.code;
+  }
+}
 
 /** JSON with object keys sorted at every level — the string NOWPayments signs. */
 export function sortedJson(v: unknown): string {

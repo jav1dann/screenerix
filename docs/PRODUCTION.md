@@ -54,6 +54,9 @@ Expected on start:
 | `NEXT_PUBLIC_TELEGRAM_BOT_USERNAME is @A, but TELEGRAM_BOT_TOKEN belongs to @B` | Variable names another bot | Fix the variable, **rebuild** (links already use @B meanwhile) |
 | `NEXT_PUBLIC_TELEGRAM_BOT_USERNAME "…" isn't a valid bot username — ignored` | Typo | Fix it, rebuild |
 | `another process is polling this bot token` (repeating) | Two servers on one token (or a dev machine) | Stop the other one |
+| `[nowpayments] POST https://api.nowpayments.io/v1/payment (live) → HTTP 403 …` `INVALID_API_KEY` | Wrong key, or a sandbox key on the live API | Use the live key from the main dashboard; set `NOWPAYMENTS_SANDBOX` only with a sandbox key |
+| `[nowpayments] … → HTTP 400 …` `AMOUNT_MINIMAL_ERROR` | Price is below NOWPayments' minimum for that network (checkout asks the customer to pick another one) | Lower the minimums / fee settings in the NOWPayments dashboard, or drop that network |
+| `[nowpayments] … failed after … ms — no answer within …` | No route to `api.nowpayments.io`, or it timed out | Check outbound HTTPS / firewall; the `cause:` part names the network error |
 
 **30s / 1s history.** Binance, Bybit, Bitget and Coinbase publish no sub-minute candles, so the
 server builds them from trades, exactly:
