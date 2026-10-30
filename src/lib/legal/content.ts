@@ -126,10 +126,10 @@ export const REFUNDS: LegalDoc = {
     { id: 'cancel', heading: 'Cancelling', body: [
       'Pro is a one-time payment per month or year and never renews by itself, so there is nothing to cancel: your plan simply ends at the end of the period you paid for unless you pay again.',
     ] },
-    { id: 'monthly', heading: 'Monthly plan ($12 / month)', body: [
+    { id: 'monthly', heading: 'Monthly plan ($8 / month)', body: [
       'Monthly payments are not refunded once the billing period has started, except where the law requires it or as described under "Service problems".',
     ] },
-    { id: 'yearly', heading: 'Yearly plan ($100 / year)', body: [
+    { id: 'yearly', heading: 'Yearly plan ($80 / year)', body: [
       'You can request a full refund within [14] days of the first yearly payment. After that, yearly payments are not refunded, but you keep access until the end of the year.',
     ] },
     { id: 'crypto', heading: 'Crypto payments', body: [

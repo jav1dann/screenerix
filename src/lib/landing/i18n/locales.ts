@@ -12,7 +12,7 @@ export const isLocale = (v: unknown): v is Locale => typeof v === 'string' && (L
 
 export const localePath = (l: Locale) => (l === DEFAULT_LOCALE ? '/' : `/${l}`);
 
-/** `fill('Save {pct}%', { pct: 31 })` → "Save 31%". */
+/** `fill('Save {pct}%', { pct: 17 })` → "Save 17%". */
 export const fill = (s: string, vars: Record<string, string | number>) => s.replace(/\{(\w+)\}/g, (m, k: string) => (k in vars ? String(vars[k]) : m));
 
 /** Splits a template around `{name}` slots, so React nodes (links) can be put in them. */
