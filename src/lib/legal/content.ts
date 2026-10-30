@@ -27,7 +27,7 @@ export const PRIVACY: LegalDoc = {
         'Google sign-in: if you choose it, Google shares your name, email address, Google account ID and profile picture. We do not receive your Google password.',
         'Settings you save in the terminal, such as layouts, watchlists, filters and alerts. Most of these stay in your browser’s local storage.',
         'Technical data needed for security: IP address and request metadata in short-lived server logs, used to prevent abuse (for example, repeated failed sign-ins).',
-        'Billing data, once paid plans are available: handled by our payment provider [payment provider]. We receive only the payment status and the last digits of your card, never the full card number.',
+        'Billing data: payments are handled by our payment provider, NOWPayments. We receive only the order ID, amount, payment status and the on-chain transaction; we never receive or store your wallet’s private keys or seed phrase.',
       ] },
       'Screenerix does not ask for exchange account keys and does not access your exchange funds. Market data shown in the terminal comes from public exchange feeds.',
     ] },
@@ -41,7 +41,7 @@ export const PRIVACY: LegalDoc = {
       'We do not sell your personal data and do not use it for advertising profiles.',
     ] },
     { id: 'sharing', heading: 'Who we share it with', body: [
-      'We share data only with providers that help us run the Service, under contracts that protect it: hosting ([hosting provider]), sign-in (Google, if you use it), messaging (Telegram, if you connect alerts) and crypto payments (NOWPayments, which receives your order ID, amount and the paying wallet’s on-chain transaction). We may disclose data if the law requires it.',
+      'We share data only with providers that help us run the Service, under contracts that protect it: hosting (InterServer), sign-in (Google, if you use it), messaging (Telegram, if you connect alerts) and crypto payments (NOWPayments, which receives your order ID, amount and the paying wallet’s on-chain transaction). We may disclose data if the law requires it.',
     ] },
     { id: 'retention', heading: 'How long we keep it', body: [
       'Account data is kept while your account exists and deleted within [30] days after you delete it, except where the law requires longer retention (for example, invoices). Security logs are kept for up to [30] days.',
@@ -105,7 +105,7 @@ export const TERMS: LegalDoc = {
       'You can stop using the Service and delete your account at any time. We may end or suspend access if you breach these Terms, with notice where reasonable.',
     ] },
     { id: 'law', heading: 'Governing law', body: [
-      `These Terms are governed by the laws of [jurisdiction], and disputes go to the courts of ${ADDRESS}, unless the consumer law of your country gives you other rights.`,
+      `These Terms are governed by the laws of the Republic of Azerbaijan, and disputes go to the courts of ${ADDRESS}, unless the consumer law of your country gives you other rights.`,
     ] },
     { id: 'changes', heading: 'Changes and contact', body: [
       `We may update these Terms and will post the new version here. If a change is material, we will notify you in advance. Questions: ${CONTACT}.`,
