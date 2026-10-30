@@ -20,6 +20,16 @@ export interface TelegramLink {
   linkedAt: number;
 }
 
+export interface EmailVerification {
+  /** HMAC of the 6-digit code (never stored in clear). */
+  hash: string;
+  expiresAt: number;
+  /** Wrong guesses against this code. */
+  attempts: number;
+  /** When each code was sent (last hour), for the resend cooldown and hourly cap. */
+  sends: number[];
+}
+
 export interface UserRecord {
   id: string;
   /** Lower-cased, unique. */
@@ -44,6 +54,14 @@ export interface UserRecord {
   telegram?: TelegramLink;
   /** Language of the bot's messages and of alert notifications (Telegram, push), picked in the bot. */
   lang?: Lang;
+  /**
+   * false: registered with email + password and not confirmed yet — no session, no trial
+   * (see `verification.ts`). Absent on older accounts, Google accounts and the admin: verified.
+   */
+  emailVerified?: boolean;
+  emailVerifiedAt?: number;
+  /** The outstanding email code while `emailVerified` is false. */
+  verification?: EmailVerification;
   /** Bumped on sign-out / password change: older session tokens stop working. */
   sessionVersion: number;
   createdAt: number;
@@ -89,7 +107,7 @@ const trialEnd = (now: number) => now + TRIAL_DAYS * DAY_MS;
  */
 function startLegacyTrials(users: UserRecord[]): UserRecord[] {
   if (process.env.NEXT_PHASE === 'phase-production-build') return users;
-  const legacy = (u: UserRecord) => u.role !== 'admin' && u.trialEndsAt === undefined && u.proExpiresAt === undefined;
+  const legacy = (u: UserRecord) => u.role !== 'admin' && !isPendingVerification(u) && u.trialEndsAt === undefined && u.proExpiresAt === undefined;
   const count = users.filter(legacy).length;
   if (!count) return users;
   const ends = trialEnd(Date.now());
@@ -100,6 +118,9 @@ function startLegacyTrials(users: UserRecord[]): UserRecord[] {
 }
 
 export const normEmail = (e: string) => e.trim().toLowerCase();
+
+/** Registered with a password and the email isn't confirmed yet. */
+export const isPendingVerification = (u: Pick<UserRecord, 'emailVerified'>): boolean => u.emailVerified === false;
 
 function hash(password: string, salt: string): Promise<Buffer> {
   return new Promise((resolve, reject) => scrypt(password.normalize('NFKC'), salt, KEY_LEN, SCRYPT, (err, key) => (err ? reject(err) : resolve(key))));
@@ -134,8 +155,11 @@ export function findById(id: string): UserRecord | null {
   return load().find((u) => u.id === id) ?? null;
 }
 
-/** New accounts start on the free trial (admins: full access, no dates needed). */
-export async function createUser(input: { email: string; name: string; password: string; role?: Role; plan?: Plan; termsAcceptedAt?: number }): Promise<UserRecord> {
+/**
+ * New accounts start on the free trial (admins: full access, no dates needed). With
+ * `pendingVerification` the account waits for its email code: the trial starts on verification.
+ */
+export async function createUser(input: { email: string; name: string; password: string; role?: Role; plan?: Plan; termsAcceptedAt?: number; pendingVerification?: boolean }): Promise<UserRecord> {
   const email = normEmail(input.email);
   if (findByEmail(email)) throw new Error('EMAIL_TAKEN');
   const now = Date.now();
@@ -144,11 +168,27 @@ export async function createUser(input: { email: string; name: string; password:
   const user: UserRecord = {
     id: randomUUID(), email, name: input.name.trim().slice(0, 80), ...(await hashPassword(input.password)),
     role, plan, sessionVersion: 1, createdAt: now,
-    ...(plan === 'trial' ? { trialEndsAt: trialEnd(now) } : {}),
+    ...(input.pendingVerification ? { emailVerified: false } : plan === 'trial' ? { trialEndsAt: trialEnd(now) } : {}),
     ...(input.termsAcceptedAt ? { termsAcceptedAt: input.termsAcceptedAt } : {}),
   };
   save([...load(), user]);
   return user;
+}
+
+/**
+ * Registering again with the email of an account still waiting for its code (and whose code
+ * has expired, see `canReplacePending`): it takes the new name, password and consent.
+ */
+export async function replacePendingUser(id: string, input: { name: string; password: string; termsAcceptedAt: number }): Promise<UserRecord | null> {
+  return updateUser(id, { name: input.name.trim().slice(0, 80), ...(await hashPassword(input.password)), termsAcceptedAt: input.termsAcceptedAt, verification: undefined });
+}
+
+/** The email is confirmed: the account becomes active and its free trial starts now. */
+export function markEmailVerified(id: string, now = Date.now()): UserRecord | null {
+  const u = findById(id);
+  if (!u) return null;
+  if (!isPendingVerification(u)) return u;
+  return updateUser(id, { emailVerified: true, emailVerifiedAt: now, verification: undefined, ...(u.role === 'admin' ? {} : { plan: 'trial' as const, trialEndsAt: trialEnd(now) }) });
 }
 
 export function updateUser(id: string, patch: Partial<Omit<UserRecord, 'id' | 'createdAt'>>): UserRecord | null {
@@ -202,6 +242,13 @@ export function findOrCreateGoogleUser(p: { sub: string; email: string; name: st
   }
   const byEmail = findByEmail(p.email);
   if (byEmail) {
+    if (isPendingVerification(byEmail)) {
+      // Google vouches for the inbox. The unconfirmed password may have been set by someone
+      // else who registered this email first, so it is dropped (a new one can be set later).
+      markEmailVerified(byEmail.id);
+      updateUser(byEmail.id, { passHash: undefined, salt: undefined });
+      console.log(`[auth] ${byEmail.email} verified through Google sign-in (unconfirmed password removed)`);
+    }
     const user = updateUser(byEmail.id, { googleSub: p.sub, ...(p.picture ? { picture: p.picture } : {}) }) ?? byEmail;
     console.log(`[auth] linked Google sign-in to ${user.email}`);
     return { user, created: false };

@@ -14,6 +14,7 @@ What to set, check and click before and after a deploy. Variables are documented
 | `NEXT_PUBLIC_TELEGRAM_BOT_USERNAME` | **build** | Inlined by `next build`: set it in the build environment (CI, Docker build args), rebuild after a change. |
 | `VAPID_PUBLIC_KEY` / `VAPID_PRIVATE_KEY` / `VAPID_SUBJECT` | runtime | Web push. Generate once on the server (command in `.env.example`); `VAPID_SUBJECT` = your real `mailto:` / `https:`. |
 | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | runtime | Redirect URI `https://<domain>/api/auth/google/callback`. |
+| `RESEND_API_KEY` / `MAIL_FROM` | runtime | Verification codes on registration. The `MAIL_FROM` domain must be verified in Resend. Unset: email registration is refused. |
 | `NOWPAYMENTS_API_KEY` / `NOWPAYMENTS_IPN_SECRET` | runtime | Not `NOWPAYMENTS_SANDBOX`, not `PAYMENTS_PROVIDER=mock`. |
 | `SX_DATA_DIR` | runtime | Accounts, orders, alerts, push subscriptions are files here — put it on a persistent volume. |
 
@@ -54,6 +55,8 @@ Expected on start:
 | `NEXT_PUBLIC_TELEGRAM_BOT_USERNAME is @A, but TELEGRAM_BOT_TOKEN belongs to @B` | Variable names another bot | Fix the variable, **rebuild** (links already use @B meanwhile) |
 | `NEXT_PUBLIC_TELEGRAM_BOT_USERNAME "…" isn't a valid bot username — ignored` | Typo | Fix it, rebuild |
 | `another process is polling this bot token` (repeating) | Two servers on one token (or a dev machine) | Stop the other one |
+| `[auth] registration refused: RESEND_API_KEY is not set` | No email provider | Set `RESEND_API_KEY` (and `MAIL_FROM`), restart |
+| `[mail] Resend → HTTP 403 …` `domain is not verified` | `MAIL_FROM` domain not verified in Resend | Verify the domain (DNS records) in Resend, or change `MAIL_FROM` |
 | `[nowpayments] POST https://api.nowpayments.io/v1/payment (live) → HTTP 403 …` `INVALID_API_KEY` | Wrong key, or a sandbox key on the live API | Use the live key from the main dashboard; set `NOWPAYMENTS_SANDBOX` only with a sandbox key |
 | `[nowpayments] … → HTTP 400 …` `AMOUNT_MINIMAL_ERROR` | Price is below NOWPayments' minimum for that network (checkout asks the customer to pick another one) | Lower the minimums / fee settings in the NOWPayments dashboard, or drop that network |
 | `[nowpayments] … failed after … ms — no answer within …` | No route to `api.nowpayments.io`, or it timed out | Check outbound HTTPS / firewall; the `cause:` part names the network error |

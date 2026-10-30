@@ -8,7 +8,7 @@ import { redirect } from 'next/navigation';
 import { accessOf } from './access';
 import type { SessionUser } from './access';
 import { cookieOptions, SESSION_COOKIE, SESSION_TTL_MS, signSession, verifySession } from './session';
-import { ensureAdmin, findById, toSessionUser } from './users';
+import { ensureAdmin, findById, isPendingVerification, toSessionUser } from './users';
 import type { UserRecord } from './users';
 
 /** The signed-in user, or null (bad / expired / revoked cookie, deleted account). */
@@ -20,7 +20,8 @@ export async function getCurrentUser(): Promise<SessionUser | null> {
   const p = await verifySession(token, undefined, Date.now());
   if (!p) return null;
   const u = findById(p.uid);
-  if (!u || u.sessionVersion !== p.v) return null;
+  // Unverified accounts never get a session; refuse one anyway.
+  if (!u || u.sessionVersion !== p.v || isPendingVerification(u)) return null;
   return toSessionUser(u);
 }
 

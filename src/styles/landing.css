@@ -145,6 +145,11 @@
 .lx-legal mark{background:rgba(245,197,66,0.14);color:var(--sx-alert);padding:0 4px;border-radius:4px}
 @media (max-width:640px){.lx-legal{padding:32px 16px 72px}}
 /* Consent checkbox */
+.lx-otp{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:8px}
+.lx-otp-box{text-align:center;font-size:22px;font-weight:600;padding:12px 0;font-variant-numeric:tabular-nums}
+.lx-link-btn{background:none;border:0;padding:0;font:inherit;font-weight:600;color:var(--sx-up);cursor:pointer}
+.lx-link-btn:disabled{color:var(--sx-muted);cursor:default;font-variant-numeric:tabular-nums}
+.lx-link-btn.lx-muted{font-weight:500;color:var(--sx-muted)}
 .lx-check{display:flex;gap:10px;align-items:flex-start;font-size:13px;color:var(--sx-muted);cursor:pointer}
 .lx-check input{margin:2px 0 0;width:16px;height:16px;accent-color:var(--sx-up);flex:none}
 .lx-root .lx-check a,.lx-root .lx-fine a{color:var(--sx-text);text-decoration:underline;text-underline-offset:2px}

@@ -4,6 +4,7 @@
  * Sign in / Register with Google (when configured) or email and password (server actions).
  * Shared by the landing modal and the /login page; success redirects to `next` (the terminal).
  * Registering requires accepting the Terms and Privacy Policy (checked again on the server).
+ * A new email account is confirmed with a 6-digit code first (`VerifyEmail`).
  */
 import { useActionState, useState } from 'react';
 import type { ReactNode } from 'react';
@@ -15,6 +16,7 @@ import type { Dict } from '@/lib/landing/i18n/en';
 import { fillParts } from '@/lib/landing/i18n/locales';
 import { COLORS } from '@/lib/theme';
 import GoogleButton from './GoogleButton';
+import VerifyEmail from './VerifyEmail';
 
 const INITIAL: AuthState = { error: null };
 
@@ -47,6 +49,14 @@ export default function AuthForm({ mode, onModeChange, next = '/terminal', autoF
   const state = isRegister ? registerState : signInState;
   const pending = isRegister ? registering : signingIn;
   const blocked = isRegister && !agreed;
+  /** Answers whose code screen "Use a different email" closed (both tabs': either may hold one). */
+  const [dismissed, setDismissed] = useState<readonly AuthState[]>([]);
+  const verify = state.verify && !dismissed.includes(state) ? state.verify : null;
+
+  if (verify) {
+    // Keyed by email: a new registration starts a fresh code screen (and cooldown).
+    return <VerifyEmail key={verify.email} email={verify.email} resendIn={verify.resendIn} next={next} onBack={() => setDismissed([signInState, registerState])} t={t} />;
+  }
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }} data-auth-form={mode}>
@@ -77,6 +87,8 @@ export default function AuthForm({ mode, onModeChange, next = '/terminal', autoF
       {/* `key` remounts the form per mode, so fields reset when switching tabs. */}
       <form key={mode} action={isRegister ? registerAction : signInAction} noValidate style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
         <input type="hidden" name="next" value={next} />
+        {/* Language of the verification email. */}
+        <input type="hidden" name="lang" value={t.lang} />
         {isRegister && <input type="hidden" name="terms" value={agreed ? 'on' : ''} />}
         {isRegister && (
           <input className="lx-input" name="name" placeholder={t.name} aria-label={t.name} autoComplete="name" defaultValue={state.name ?? ''} autoFocus={autoFocus} required />

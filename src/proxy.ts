@@ -13,7 +13,7 @@ import type { NextRequest } from 'next/server';
 import { SESSION_COOKIE, verifySession } from '@/lib/auth/session';
 import { DEFAULT_LOCALE, isLocale, LANG_COOKIE, localePath, negotiateLocale } from '@/lib/landing/i18n/locales';
 import { hasAccess } from '@/lib/auth/access';
-import { findById } from '@/lib/auth/users';
+import { findById, isPendingVerification } from '@/lib/auth/users';
 import type { UserRecord } from '@/lib/auth/users';
 
 async function sessionUser(req: NextRequest): Promise<UserRecord | null> {
@@ -21,7 +21,7 @@ async function sessionUser(req: NextRequest): Promise<UserRecord | null> {
   if (!p) return null;
   // Revoked (signed out / password changed) or deleted accounts fail here too.
   const u = findById(p.uid);
-  return u && u.sessionVersion === p.v ? u : null;
+  return u && u.sessionVersion === p.v && !isPendingVerification(u) ? u : null;
 }
 
 function landingRedirect(req: NextRequest): NextResponse {
