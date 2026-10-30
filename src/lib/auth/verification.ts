@@ -1,16 +1,16 @@
 /**
- * Email verification for accounts registered with a password: a 6-digit code (crypto random),
- * stored only as an HMAC on the account with a 10-minute expiry, sent by email. Each code
- * allows 5 guesses; a new one can be sent after a 1-minute cooldown, at most 5 per hour.
- * Server-only.
+ * Email verification for accounts registered with a password, and for a new email chosen in
+ * the account settings: a 6-digit code (crypto random), stored only as an HMAC on the account
+ * with a 10-minute expiry, sent by email. Each code allows 5 guesses; a new one can be sent
+ * after a 1-minute cooldown, at most 5 per hour. Server-only.
  */
 import { createHmac, randomInt, timingSafeEqual } from 'node:crypto';
 import { isLocale } from '@/lib/landing/i18n/locales';
 import type { Locale } from '@/lib/landing/i18n/locales';
 import { MailError, sendMail } from '@/lib/mail/send';
 import { authSecret } from './session';
-import { isPendingVerification, markEmailVerified, updateUser } from './users';
-import type { UserRecord } from './users';
+import { findByEmail, isPendingVerification, markEmailVerified, normEmail, updateUser } from './users';
+import type { EmailVerification, UserRecord } from './users';
 
 export const CODE_LENGTH = 6;
 export const CODE_TTL_MS = 10 * 60_000;
@@ -19,18 +19,24 @@ const MAX_ATTEMPTS = 5;
 const MAX_SENDS_PER_HOUR = 5;
 const HOUR_MS = 3_600_000;
 
-const codeHash = (uid: string, code: string) => createHmac('sha256', authSecret()).update(`email-verify:${uid}:${code}`).digest();
+/** `purpose` binds a code to what it confirms (registration, or a change to one specific email). */
+const codeHash = (uid: string, code: string, purpose = 'email-verify') => createHmac('sha256', authSecret()).update(`${purpose}:${uid}:${code}`).digest();
+const changePurpose = (email: string) => `email-change:${email}`;
 
-const recentSends = (u: UserRecord, now: number) => (u.verification?.sends ?? []).filter((t) => now - t < HOUR_MS);
+const newCode = () => String(randomInt(0, 10 ** CODE_LENGTH)).padStart(CODE_LENGTH, '0');
+const recentOf = (v: EmailVerification | undefined, now: number) => (v?.sends ?? []).filter((t) => now - t < HOUR_MS);
+const recentSends = (u: UserRecord, now: number) => recentOf(u.verification, now);
 
-/** Milliseconds until another code may be sent to `u` (0: now). */
-export function resendWait(u: UserRecord, now = Date.now()): number {
-  const sends = recentSends(u, now);
+/** Milliseconds until another code may be sent (0: now), from the send history of one code kind. */
+function waitFor(sends: number[], now: number): number {
   if (!sends.length) return 0;
   const cooldown = Math.max(0, sends[sends.length - 1] + RESEND_COOLDOWN_MS - now);
   const hourly = sends.length >= MAX_SENDS_PER_HOUR ? sends[sends.length - MAX_SENDS_PER_HOUR] + HOUR_MS - now : 0;
   return Math.max(cooldown, hourly);
 }
+
+/** Milliseconds until another registration code may be sent to `u` (0: now). */
+export const resendWait = (u: UserRecord, now = Date.now()): number => waitFor(recentSends(u, now), now);
 
 /** A pending account may be taken over by a new registration once its code has expired (limits email squatting). */
 export const canReplacePending = (u: UserRecord, now = Date.now()): boolean => !u.verification || u.verification.expiresAt <= now;
@@ -62,7 +68,7 @@ export type SendResult = { ok: true; resendIn: number } | { ok: false; reason: '
 export async function sendVerificationCode(u: UserRecord, lang: unknown, now = Date.now()): Promise<SendResult> {
   const wait = resendWait(u, now);
   if (wait > 0) return { ok: false, reason: 'wait', resendIn: wait };
-  const code = String(randomInt(0, 10 ** CODE_LENGTH)).padStart(CODE_LENGTH, '0');
+  const code = newCode();
   try {
     await sendMail(verificationMail(u.email, code, isLocale(lang) ? lang : 'en'));
   } catch (e) {
@@ -92,5 +98,60 @@ export function checkVerificationCode(u: UserRecord, input: string, now = Date.n
   }
   const attempts = v.attempts + 1;
   updateUser(u.id, { verification: { ...v, attempts } });
+  return attempts >= MAX_ATTEMPTS ? { ok: false, reason: 'locked' } : { ok: false, reason: 'invalid', attemptsLeft: MAX_ATTEMPTS - attempts };
+}
+
+function changeMail(to: string, code: string) {
+  const intro = 'Enter this code in Screenerix to confirm this as your new sign-in email:';
+  const ignore = 'If you didn’t ask for this, ignore this email — nothing changes without the code.';
+  return {
+    to,
+    subject: `Confirm your new Screenerix email: ${code}`,
+    text: `${intro}\n\n${code}\n\n${COPY.en.expires}\n${ignore}\n\n— Screenerix`,
+    html: verificationMail(to, code, 'en').html.replace(COPY.en.intro, intro).replace(COPY.en.ignore, ignore),
+  };
+}
+
+/**
+ * A new email for a signed-in account: the code goes to the new address, and the email only
+ * changes once it is entered there (`checkEmailChangeCode`). The cooldown and hourly cap count
+ * every code sent for email changes, whatever the address, so this can't be used to spam inboxes.
+ */
+export async function sendEmailChangeCode(u: UserRecord, rawEmail: string, now = Date.now()): Promise<SendResult> {
+  const email = normEmail(rawEmail);
+  const sends = recentOf(u.emailChange, now);
+  const wait = waitFor(sends, now);
+  if (wait > 0) return { ok: false, reason: 'wait', resendIn: wait };
+  const code = newCode();
+  try {
+    await sendMail(changeMail(email, code));
+  } catch (e) {
+    if (!(e instanceof MailError)) console.error('[auth] email-change code failed', e);
+    return { ok: false, reason: 'mail', resendIn: 0 };
+  }
+  updateUser(u.id, { emailChange: { email, hash: codeHash(u.id, code, changePurpose(email)).toString('base64url'), expiresAt: now + CODE_TTL_MS, attempts: 0, sends: [...sends, now] } });
+  console.log(`[auth] email-change code sent: ${u.email} → ${email}`);
+  return { ok: true, resendIn: RESEND_COOLDOWN_MS };
+}
+
+export type ChangeResult = { ok: true; user: UserRecord } | { ok: false; reason: 'invalid' | 'expired' | 'locked' | 'taken'; attemptsLeft?: number };
+
+/** The code sent to the requested new email: right → the account's email is that address now. */
+export function checkEmailChangeCode(u: UserRecord, input: string, now = Date.now()): ChangeResult {
+  const c = u.emailChange;
+  if (!c || c.expiresAt <= now) return { ok: false, reason: 'expired' };
+  if (c.attempts >= MAX_ATTEMPTS) return { ok: false, reason: 'locked' };
+  const code = input.replace(/\D/g, '');
+  const expected = Buffer.from(c.hash, 'base64url');
+  const got = codeHash(u.id, code, changePurpose(c.email));
+  if (code.length === CODE_LENGTH && expected.length === got.length && timingSafeEqual(expected, got)) {
+    const other = findByEmail(c.email);
+    if (other && other.id !== u.id) { updateUser(u.id, { emailChange: undefined }); return { ok: false, reason: 'taken' }; }
+    const user = updateUser(u.id, { email: c.email, emailChange: undefined, emailVerified: true, emailVerifiedAt: now }) ?? u;
+    console.log(`[auth] email changed: ${u.email} → ${c.email}`);
+    return { ok: true, user };
+  }
+  const attempts = c.attempts + 1;
+  updateUser(u.id, { emailChange: { ...c, attempts } });
   return attempts >= MAX_ATTEMPTS ? { ok: false, reason: 'locked' } : { ok: false, reason: 'invalid', attemptsLeft: MAX_ATTEMPTS - attempts };
 }

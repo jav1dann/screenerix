@@ -90,6 +90,8 @@ try {
     SX_TEST_DIR: dir,
     TELEGRAM_BOT_TOKEN: '123:test',
     TELEGRAM_API_BASE: `http://127.0.0.1:${telegram.address().port}`,
+    // The local push server stands in for FCM / Mozilla / Apple (ignored in production).
+    PUSH_TEST_HOSTS: 'localhost',
     VAPID_PUBLIC_KEY: vapid.publicKey,
     VAPID_PRIVATE_KEY: vapid.privateKey,
     VAPID_SUBJECT: 'mailto:test@screenerix.local',

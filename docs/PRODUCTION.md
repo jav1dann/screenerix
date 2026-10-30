@@ -18,7 +18,7 @@ What to set, check and click before and after a deploy. Variables are documented
 | `NOWPAYMENTS_API_KEY` / `NOWPAYMENTS_IPN_SECRET` | runtime | Not `NOWPAYMENTS_SANDBOX`, not `PAYMENTS_PROVIDER=mock`. |
 | `SX_DATA_DIR` | runtime | Accounts, orders, alerts, push subscriptions are files here — put it on a persistent volume. |
 
-Never set in production: `TELEGRAM_API_BASE`, `PAYMENTS_ALLOW_MOCK`, `AUTH_INSECURE_COOKIE`.
+Never set in production: `TELEGRAM_API_BASE`, `PAYMENTS_ALLOW_MOCK`, `AUTH_INSECURE_COOKIE`, `PUSH_TEST_HOSTS` (ignored there anyway).
 
 Run **one** server instance: Telegram allows one poller per token, and the file storage has one writer.
 A second instance (pages only) needs `SCANNER=off` and no `TELEGRAM_BOT_TOKEN`.

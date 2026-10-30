@@ -88,6 +88,9 @@ export async function register(_prev: AuthState, form: FormData): Promise<AuthSt
     console.error('[auth] registration refused: RESEND_API_KEY is not set, so the verification code can’t be emailed');
     return { error: 'Registration is temporarily unavailable. Please try again later.', email, name };
   }
+  // New sign-ups per client IP (behind a trusted proxy): each one sends an email.
+  const ipKeys = (await throttleKeys(email, 'reg:')).filter((k) => k.startsWith('reg:ip:'));
+  if (isThrottled(ipKeys)) return { error: 'Too many sign-ups from this network. Try again in a few minutes.', email, name };
   const existing = findByEmail(email);
   let user: UserRecord | null;
   if (existing && isPendingVerification(existing)) {
@@ -106,6 +109,7 @@ export async function register(_prev: AuthState, form: FormData): Promise<AuthSt
     }
   }
   if (!user) return TAKEN;
+  recordFailure(ipKeys);
   return toVerify(user, form.get('lang'), { error: null, email, name });
 }
 

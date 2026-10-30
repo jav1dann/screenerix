@@ -79,6 +79,14 @@ export function verifySignedBody(rawBody: string, signature: string | null, secr
 
 export const ipnSecret = (): string | undefined => process.env.NOWPAYMENTS_IPN_SECRET?.trim() || undefined;
 
+let sandboxWarned = false;
+/** Sandbox payments are simulated (and may be set to always succeed): never in production. */
+function warnSandboxInProduction(): void {
+  if (sandboxWarned || process.env.NODE_ENV !== 'production' || !/^(1|true|yes|on)$/i.test(process.env.NOWPAYMENTS_SANDBOX?.trim() ?? '')) return;
+  sandboxWarned = true;
+  console.error('[billing] NOWPAYMENTS_SANDBOX is on in production — payments are simulated and grant real Pro. Unset it and use the live API key.');
+}
+
 /** The configured provider, or null (checkout unavailable). */
 export function paymentProvider(): PaymentProvider | null {
   const choice = process.env.PAYMENTS_PROVIDER?.trim().toLowerCase();
@@ -90,6 +98,9 @@ export function paymentProvider(): PaymentProvider | null {
     return ipnSecret() ? mockProvider : null;
   }
   const key = process.env.NOWPAYMENTS_API_KEY?.trim();
-  if ((!choice || choice === 'nowpayments') && key && ipnSecret()) return nowPaymentsProvider(key);
+  if ((!choice || choice === 'nowpayments') && key && ipnSecret()) {
+    warnSandboxInProduction();
+    return nowPaymentsProvider(key);
+  }
   return null;
 }

@@ -62,6 +62,8 @@ export interface UserRecord {
   emailVerifiedAt?: number;
   /** The outstanding email code while `emailVerified` is false. */
   verification?: EmailVerification;
+  /** A requested new email, applied once the code sent to it is entered (`confirmEmailChange`). */
+  emailChange?: EmailVerification & { email: string };
   /** Bumped on sign-out / password change: older session tokens stop working. */
   sessionVersion: number;
   createdAt: number;

@@ -67,9 +67,21 @@ export function oauthErrorMessage(error: unknown): string | null {
   }
 }
 
-/** A post-login destination: a same-origin path only (no `//host`, schemes or backslashes). */
+/**
+ * A post-login destination: a same-origin path only (no `//host`, schemes or backslashes).
+ * Control characters and whitespace are refused outright: browsers drop tabs / newlines inside
+ * URLs, so "/\t/evil.com" would become "//evil.com". The result must still resolve to our own
+ * origin after URL parsing.
+ */
 export function safeNext(next: unknown, fallback = '/terminal'): string {
-  if (typeof next !== 'string' || !next.startsWith('/') || next.startsWith('//') || next.includes('\\') || /[\r\n]/.test(next)) return fallback;
+  if (typeof next !== 'string' || next.length > 512 || !next.startsWith('/') || next.startsWith('//') || next.includes('\\')) return fallback;
+  if (/[\u0000-\u0020\u007f-\u009f\u2028\u2029]/.test(next)) return fallback;
+  try {
+    const base = 'https://screenerix.invalid';
+    if (new URL(next, base).origin !== base) return fallback;
+  } catch {
+    return fallback;
+  }
   if (next.startsWith('/login')) return fallback;
-  return next.slice(0, 512);
+  return next;
 }

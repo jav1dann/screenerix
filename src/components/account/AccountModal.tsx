@@ -9,7 +9,7 @@ import { useRouter } from 'next/navigation';
 import { useEffect, useEffectEvent, useState, useSyncExternalStore, useTransition } from 'react';
 import type { FormEvent, ReactNode } from 'react';
 import { createPortal } from 'react-dom';
-import { changeEmail, changePassword, disconnectTelegram, getAccount, setNotifyLanguage, setPassword, unlinkGoogle } from '@/app/actions/account';
+import { cancelEmailChange, changeEmail, changePassword, confirmEmailChange, disconnectTelegram, getAccount, setNotifyLanguage, setPassword, unlinkGoogle } from '@/app/actions/account';
 import type { AccountResult, AccountView } from '@/app/actions/account';
 import { StatusPill } from '@/components/billing/PaymentStep';
 import TelegramIcon from '@/components/shared/brand/TelegramIcon';
@@ -151,15 +151,26 @@ function EmailSection({ account, apply }: { account: AccountView; apply: Apply }
       <Card title="Email" hint="Where you sign in and how we identify your account." data="email">
         <div className="ac-row">
           <span className="ac-value" data-account-email>{account.email}</span>
-          {!editing && <button type="button" className="bx-btn" onClick={() => setEditing(true)} data-change-email>Change</button>}
+          {!editing && !account.pendingEmail && <button type="button" className="bx-btn" onClick={() => setEditing(true)} data-change-email>Change</button>}
         </div>
-        {editing && (account.hasPassword ? (
+        {account.pendingEmail && (
+          <form className="ac-form" onSubmit={(e) => { e.preventDefault(); const f = e.currentTarget; const code = value(e, 'code'); run(() => confirmEmailChange(code), () => f.reset()); }} data-email-confirm>
+            <Field label={`Code sent to ${account.pendingEmail}`}>
+              <input className="ac-input" name="code" inputMode="numeric" autoComplete="one-time-code" pattern="[0-9 ]{6,7}" maxLength={7} placeholder="6-digit code" required autoFocus />
+            </Field>
+            <div className="ac-actions">
+              <button type="button" className="bx-btn" disabled={busy} onClick={() => run(() => cancelEmailChange())}>Cancel change</button>
+              <button type="submit" className="bx-btn bx-btn-primary" disabled={busy}>{busy ? 'Checking…' : 'Confirm email'}</button>
+            </div>
+          </form>
+        )}
+        {editing && !account.pendingEmail && (account.hasPassword ? (
           <form className="ac-form" onSubmit={(e) => { e.preventDefault(); const em = value(e, 'email'), pw = value(e, 'password'); run(() => changeEmail(em, pw), () => setEditing(false)); }} data-email-form>
             <Field label="New email"><input className="ac-input" name="email" type="email" autoComplete="email" required autoFocus /></Field>
             <Field label="Current password"><input className="ac-input" name="password" type="password" autoComplete="current-password" required /></Field>
             <div className="ac-actions">
               <button type="button" className="bx-btn" onClick={() => setEditing(false)}>Cancel</button>
-              <button type="submit" className="bx-btn bx-btn-primary" disabled={busy}>{busy ? 'Saving…' : 'Save email'}</button>
+              <button type="submit" className="bx-btn bx-btn-primary" disabled={busy}>{busy ? 'Sending code…' : 'Send code'}</button>
             </div>
           </form>
         ) : (

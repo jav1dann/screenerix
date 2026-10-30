@@ -8,6 +8,8 @@ import type { Logo } from './logos';
 /** Display names (as the adapters spell them), kept here so pages that only show logos don't load the adapters. */
 const NAMES: Record<ExchangeId, string> = { binance: 'Binance', bybit: 'Bybit', okx: 'OKX', bitget: 'Bitget', gate: 'Gate', coinbase: 'Coinbase' };
 
+const escapeXml = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+
 interface MarkProps { size?: number; title?: string; style?: CSSProperties; className?: string }
 
 /** One brand SVG. Gradient ids are made unique per instance (several logos share a page). */
@@ -19,8 +21,8 @@ function Mark({ logo, size = 16, title, style, className, kind }: MarkProps & { 
       width={size} height={size} viewBox={logo.viewBox} fill="none" className={className} data-brand={kind}
       role={title ? 'img' : undefined} aria-label={title} aria-hidden={title ? undefined : true}
       style={{ display: 'block', flex: 'none', ...style }}
-      // Static markup from our own logos.ts (generated from web3icons), never user input.
-      dangerouslySetInnerHTML={{ __html: (title ? `<title>${title}</title>` : '') + body }}
+      // Static markup from our own logos.ts (generated from web3icons); the title is escaped.
+      dangerouslySetInnerHTML={{ __html: (title ? `<title>${escapeXml(title)}</title>` : '') + body }}
     />
   );
 }

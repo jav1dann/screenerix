@@ -7,12 +7,13 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "test": "npm run test:timeframes && npm run test:strategies && npm run test:verification && npm run test:alerts",
+    "test": "npm run test:timeframes && npm run test:strategies && npm run test:verification && npm run test:security && npm run test:alerts",
     "test:alerts": "node scripts/test-alerts.mjs",
     "typecheck": "next typegen && tsc --noEmit",
     "test:strategies": "tsx --tsconfig tsconfig.json scripts/test-strategies.ts",
     "test:timeframes": "tsx --tsconfig tsconfig.json scripts/test-timeframes.ts",
-    "test:verification": "tsx --tsconfig tsconfig.json scripts/test-verification.ts"
+    "test:verification": "tsx --tsconfig tsconfig.json scripts/test-verification.ts",
+    "test:security": "tsx --tsconfig tsconfig.json scripts/test-security.ts"
   },
   "dependencies": {
     "clsx": "^2.1.1",
