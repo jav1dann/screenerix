@@ -16,6 +16,8 @@ import { sortLabel } from '@/lib/settings/settings';
 import type { SortPref } from '@/lib/settings/settings';
 import { h3, sectionTitle } from '../styles';
 import SafeBoundary from '@/components/shared/SafeBoundary';
+import FeedUnavailable from '../FeedUnavailable';
+import type { FeedProblem } from '../FeedUnavailable';
 
 interface MarketMapProps {
   market: Asset[];
@@ -38,7 +40,7 @@ interface MarketMapProps {
   /** Enabled screener filter (chip + paused notice). */
   screen?: MapScreen | null;
   /** The exchange's market feed failed (shown instead of "waiting", with Retry; it also retries by itself). */
-  unavailable?: { text: string; onRetry: () => void } | null;
+  unavailable?: FeedProblem | null;
 }
 
 export interface MapScreen {
@@ -129,10 +131,7 @@ export default function MarketMap({ market, exchange, sort, metrics, tf, grid, s
       {tiles.length === 0 && (
         <div className="sx-glass sx-skeleton" style={{ height: 160 }}>
           {unavailable ? (
-            <span style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10 }} role="alert" data-feed-error>
-              {unavailable.text}
-              <button type="button" className="sx-btn" onClick={unavailable.onRetry} data-feed-retry>Retry now</button>
-            </span>
+            <FeedUnavailable problem={unavailable} />
           ) : !filtering || !screen ? 'Waiting for market data…'
             : screen.scan.scanned < screen.scan.candidates ? `Scanning ${screen.name}… ${screen.scan.scanned} / ${screen.scan.candidates} coins checked`
             : `No coins match “${screen.name}” right now.`}

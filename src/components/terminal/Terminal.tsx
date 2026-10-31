@@ -10,6 +10,7 @@ import { useEffect, useEffectEvent, useMemo, useState, useSyncExternalStore } fr
 import ExpandedChartModal from '@/components/chart/expanded/ExpandedChartModal';
 import RatioChartModal from '@/components/chart/expanded/RatioChartModal';
 import { useMarketFeed } from '@/hooks/useMarketFeed';
+import { useVenueHealth } from '@/hooks/useVenueHealth';
 import { useFilters, useMetricTable } from '@/hooks/useScreener';
 import IndicatorModal from '@/components/chart/IndicatorModal';
 import AccountModalHost from '@/components/account/AccountModal';
@@ -23,12 +24,16 @@ import StrategyTabs from '@/components/strategies/StrategyTabs';
 import { useSettings, useSymbolList, useTerminalPrefs } from '@/hooks/useTerminal';
 import type { MarketType } from '@/lib/alerts/alertStore';
 
-import { DEFAULT_COMPARE, HEADER_CONTROLS_H, HEADER_TOP_H, TABS } from '@/lib/market/constants';
+import { HEADER_CONTROLS_H, HEADER_TOP_H, TABS } from '@/lib/market/constants';
 import { ADAPTERS, EXCHANGE_IDS } from '@/lib/market/exchanges';
 import { toRow } from '@/lib/market/simulation';
 import type { ExchangeId, SortDir, SortKey, TabId, TickerRow } from '@/lib/market/types';
 import type { ChartLevel } from '@/components/chart/expanded/AdvancedChart';
 import { terminalPrefs } from '@/lib/market/terminalPrefs';
+import { defaultCompare } from '@/lib/market/venueChoice';
+import { useVenueSelection } from '@/hooks/useVenueSelection';
+import FeedUnavailable from './FeedUnavailable';
+import type { FeedProblem } from './FeedUnavailable';
 import { sortRanking } from '@/lib/screener/defaultRanking';
 import { METRIC_BY_KEY } from '@/lib/screener/metrics';
 import {
@@ -86,14 +91,19 @@ export default function Terminal({ user, onExit, defaultSidebarOpen = true }: Te
   const sort = venueSort(allowedSort(prefs.sort, settings.sorting.modes), settings.sorting.modes, primary);
   const cardTf = pick(prefs.tf, settings.timeframe.enabled);
   const grid = pick(prefs.grid, settings.tops.enabled);
-  const setPrimary = (market: MarketType, id: ExchangeId) => updateTerminalPrefs({ market, venue: { ...terminalPrefs.getSnapshot().venue, [market]: id } });
+  // A venue picked here is the user's choice: never switched automatically (venueChoice.ts).
+  const setPrimary = (market: MarketType, id: ExchangeId) => updateTerminalPrefs({ market, venue: { ...terminalPrefs.getSnapshot().venue, [market]: id }, venueChosen: { ...terminalPrefs.getSnapshot().venueChosen, [market]: true } });
+  // Exchanges that refuse our server's region (HTTP 451 / 403), as the server last saw them.
+  const health = useVenueHealth();
   // The "Default …" settings apply once, when the terminal opens.
   useEffect(() => {
     const patch = startupPatch(settingsStore.getSnapshot(), terminalPrefs.getSnapshot());
     if (patch) terminalPrefs.update(patch);
   }, []);
   const supports = (id: ExchangeId) => (ADAPTERS[id].market === 'perp' ? 'futures' : 'spot') === marketType;
-  const [compare, setCompare] = useState<ExchangeId[]>([...DEFAULT_COMPARE]);
+  // null until the user toggles a venue: then the default comparison skips refused exchanges.
+  const [compareChoice, setCompareChoice] = useState<ExchangeId[] | null>(null);
+  const compare = compareChoice ?? defaultCompare(marketType, (id) => health?.[id]?.state === 'restricted');
   const [activeSymbol, setActiveSymbol] = useState('BTC');
   const [sidebarOpen, setSidebarOpen] = useState(defaultSidebarOpen);
   const alertsState = useSyncExternalStore(alertsClient.subscribe, alertsClient.getSnapshot, alertsClient.getServerSnapshot);
@@ -172,6 +182,9 @@ export default function Terminal({ user, onExit, defaultSidebarOpen = true }: Te
   const natrBySymbol = useMemo(() => new Map(tab === 'review' ? table.rows.map((r) => [r.s, r.m[NATR_KEY] ?? null]) : []), [tab, table.rows]);
   const metricsBySymbol = useMemo(() => new Map(tab === 'map' ? table.rows.map((r) => [r.s, r.m]) : []), [tab, table.rows]);
   const status = feed.getStatus();
+  // Exchanges refusing our servers' region, the working alternatives, and the automatic switch for
+  // visitors who never picked a venue (a picked one is never changed).
+  const selection = useVenueSelection({ market: marketType, primary, chosen: prefs.venueChosen[marketType], enabled: venues, status, health });
   const venue = ADAPTERS[primary];
   const venueLabel = `${venue.name} · ${venue.market === 'perp' ? 'Perp' : 'Spot'}`;
   // The control row exists on the Market Map (exchange pills, filters, grid, …), Densities and Strategies.
@@ -223,7 +236,7 @@ export default function Terminal({ user, onExit, defaultSidebarOpen = true }: Te
   /** Arbitrage pills toggle extra venues to compare (the primary always stays). */
   const toggleCompare = (id: ExchangeId) => {
     if (!supports(id) || id === primary) return;
-    setCompare((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
+    setCompareChoice((prev) => { const cur = prev ?? compare; return cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id]; });
   };
   const openFromSearch = ({ symbol, exchange }: SearchPick) => {
     setSearchOpen(false);
@@ -242,18 +255,23 @@ export default function Terminal({ user, onExit, defaultSidebarOpen = true }: Te
   };
 
 
-  // The primary venue's market list failed: say so (it keeps retrying by itself, with backoff) and offer Retry.
-  const feedDown = status[primary].state === 'error'
-    ? { text: `${venue.name} is unavailable — ${status[primary].error ?? 'connection failed'}. Retrying automatically…`, onRetry: () => feed.retry(primary) }
+  // The primary venue's market list failed: say why and what to do. An outage keeps retrying by
+  // itself (with backoff) and offers Retry; an exchange refusing our servers' region isn't an
+  // outage — explain it and offer the exchanges that work instead.
+  const primaryRestricted = !!status[primary].restricted;
+  const feedDown: FeedProblem | null = status[primary].state === 'error'
+    ? {
+      text: primaryRestricted
+        ? `${venue.name} doesn’t serve market data to our servers’ region, so it can’t be shown here. Other exchanges work normally.`
+        : `${venue.name} is unavailable — ${status[primary].error ?? 'connection failed'}. Retrying automatically…`,
+      restricted: primaryRestricted,
+      onRetry: () => feed.retry(primary),
+      alternatives: primaryRestricted ? selection.alternatives.map((id) => ({ id, name: ADAPTERS[id].name, onPick: () => setPrimary(marketType, id) })) : undefined,
+    }
     : null;
   const waiting = (
     <div className="sx-glass sx-skeleton" style={{ height: 240 }}>
-      {feedDown ? (
-        <span style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10 }} role="alert" data-feed-error>
-          {feedDown.text}
-          <button type="button" className="sx-btn" onClick={feedDown.onRetry} data-feed-retry>Retry now</button>
-        </span>
-      ) : `Waiting for ${venueLabel} data…`}
+      {feedDown ? <FeedUnavailable problem={feedDown} /> : `Waiting for ${venueLabel} data…`}
     </div>
   );
 
@@ -264,7 +282,7 @@ export default function Terminal({ user, onExit, defaultSidebarOpen = true }: Te
         tab={tab}
         onTab={setTab}
         primary={primary}
-        status={status}
+        status={selection.status}
         onPickExchange={pickPrimary}
         market={marketType}
         onMarket={(m) => updateTerminalPrefs({ market: m })}
@@ -327,13 +345,13 @@ export default function Terminal({ user, onExit, defaultSidebarOpen = true }: Te
           {tab === 'strat' && <StrategiesModule primary={primary} />}
           {tab === 'arb' && (
             <ArbitrageScreener
-              market={market}
               venues={compareSet}
               primary={primary}
               marketType={marketType}
-              status={status}
+              status={selection.status}
               onToggleVenue={toggleCompare}
               getQuote={feed.getQuote}
+              getListed={feed.getListed}
             />
           )}
           </SafeBoundary>

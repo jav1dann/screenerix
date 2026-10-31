@@ -25,7 +25,10 @@ export interface MarketFeed {
   retry(id: ExchangeId): void;
 
   getMarket(): Asset[];
+  /** A venue's latest price for `symbol` (with when it arrived and whether its stream is live); null if none. */
   getQuote(id: ExchangeId, symbol: string): VenueQuote | null;
+  /** Base symbols a streaming venue lists (empty while it loads, or when unavailable / restricted). */
+  getListed(id: ExchangeId): string[];
   /** null while loading, [] when unavailable. */
   getCandles(symbol: string, tf: Timeframe): Candle[] | null;
   getBook(symbol: string): OrderBook | null;

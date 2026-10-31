@@ -34,7 +34,6 @@ export const SEED_ALERTS: AlertItem[] = [
 ];
 
 export const DEFAULT_PRIMARY: ExchangeId = 'binance';
-export const DEFAULT_COMPARE: readonly ExchangeId[] = ['binance', 'bybit', 'okx', 'bitget'];
 
 /** Live alert rule — matches the "Any · |1m| > 0.3%" rule shown in the Alerts drawer. */
 export const ALERT_MOVE_1M = 0.003;

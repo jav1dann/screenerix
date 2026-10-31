@@ -334,6 +334,8 @@ export function startupPatch(s: Settings, p: TerminalPrefs): Partial<TerminalPre
     const market = marketOf(defaultVenue);
     patch.market = market;
     patch.venue = { ...p.venue, [market]: defaultVenue };
+    // A default chosen in Settings is the user's pick: kept even if that exchange is unavailable.
+    patch.venueChosen = { ...p.venueChosen, [market]: true };
   }
   const { defaultMode } = s.sorting;
   if (defaultMode !== 'last') patch.sort = allowedSort({ mode: defaultMode, window: p.sort.window }, [defaultMode]);

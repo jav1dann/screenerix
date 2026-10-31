@@ -187,8 +187,15 @@ export function startMarketWorker(venue: ExchangeId): MarketWorker {
   async function tickerLoop(): Promise<void> {
     while (!stopped) {
       const started = Date.now();
-      try { await tickers(); } catch { errors++; }
-      await sleep(Math.max(1_000, (TICKERS_MS[venue] ?? DEFAULT_TICKERS_MS) - (Date.now() - started)));
+      let restrictedUntil = 0;
+      try { await tickers(); } catch (e) {
+        errors++;
+        const { code, retryAt } = (e ?? {}) as { code?: unknown; retryAt?: unknown };
+        if (code === 'restricted' && typeof retryAt === 'number') restrictedUntil = retryAt;
+      }
+      // A refused venue is checked again when its breaker allows (venueHealth.ts), not every few seconds.
+      const wait = restrictedUntil ? restrictedUntil - Date.now() : (TICKERS_MS[venue] ?? DEFAULT_TICKERS_MS) - (Date.now() - started);
+      await sleep(Math.max(1_000, wait));
     }
   }
 
@@ -233,8 +240,10 @@ export function startMarketWorker(venue: ExchangeId): MarketWorker {
         fetches++;
       } catch (e) {
         errors++;
-        const status = (e as { status?: unknown } | null)?.status;
+        const { status, code, retryAt } = (e ?? {}) as { status?: unknown; code?: unknown; retryAt?: unknown };
         if (status === 404 || status === 400) { st.final = true; st.data = null; }
+        // Refused from this server's region: wait for the venue's next check, not a minute.
+        else if (code === 'restricted' && typeof retryAt === 'number') st.retryAt = retryAt;
         else st.retryAt = Date.now() + (status === 429 || status === 418 ? 30_000 : RETRY_MS);
       } finally {
         st.busy = false;

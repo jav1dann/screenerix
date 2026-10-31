@@ -56,6 +56,8 @@ Expected on start:
 | `NEXT_PUBLIC_TELEGRAM_BOT_USERNAME is @A, but TELEGRAM_BOT_TOKEN belongs to @B` | Variable names another bot | Fix the variable, **rebuild** (links already use @B meanwhile) |
 | `NEXT_PUBLIC_TELEGRAM_BOT_USERNAME "…" isn't a valid bot username — ignored` | Typo | Fix it, rebuild |
 | `another process is polling this bot token` (repeating) | Two servers on one token (or a dev machine) | Stop the other one |
+| `[market] fapi.binance.com refuses this server (HTTP 451) — paused; checking again every 15 min` | The exchange doesn't serve this server's region (Binance futures 451, Bybit 403). Not a bug: every other exchange keeps working | Nothing to fix in the app. Visitors are moved to a working exchange; see §4 |
+| `[market] … answers this server again (HTTP 200) — resumed` | A refused exchange serves the server again | — |
 | `[app] AUTH_URL is not set and the request arrives as http://localhost:3000` | Google sign-in would redirect visitors to localhost | Set `AUTH_URL=https://screenerix.com`, restart |
 | `[app] AUTH_URL is not a valid absolute URL` | e.g. `screenerix.com` without `https://` | Use the full origin |
 | `[auth] no admin account: set ADMIN_EMAIL and ADMIN_PASSWORD` | No admin configured | Set both, restart |
@@ -87,7 +89,29 @@ server builds them from trades, exactly:
 OKX and Gate have their own sub-minute candles and aren't recorded.
 | `getMe failed (…) — will keep trying` / `polling: fetch failed` | No route to `api.telegram.org` | Check outbound HTTPS / firewall |
 
-## 4. Live Telegram alert flow — sanity check (≈ 5 minutes)
+## 4. Exchanges that refuse the server's region
+
+Some exchanges refuse market-data requests from some server locations (from the New York VPS:
+Binance futures HTTP 451, Bybit HTTP 403; OKX, Bitget, Gate and Coinbase answer). The app treats a
+451 / 403 as a regional restriction, not an outage:
+
+- **Server:** a per-host circuit breaker (`lib/market/server/venueHealth.ts`). After the first
+  refusal, no request goes to that host for 15 minutes; then one probe. Market routes answer
+  `503 {code: "VENUE_RESTRICTED"}` with `Retry-After`. Workers and the 30s / 1s recorder pause
+  for that venue. Other venues are independent.
+- **Check what the server sees:** `GET /api/market/venues` (signed in), or `venues` in
+  `GET /api/scan/status`.
+- **Visitors:** a visitor who never picked an exchange lands on the first working one (OKX today).
+  A venue someone picked (or set as their default in Settings, or had stored before) is kept: the
+  terminal explains the restriction and offers one-click switches. Exchange pills show
+  "unavailable" for refused venues.
+- **Arbitrage:** compares every selected venue that streams; a spread needs at least two current,
+  live quotes (under 2 minutes, from after the last reconnect). Refused venues are shown as
+  restricted, never filled in from another exchange.
+- Nothing routes around a refusal (no proxies, no other endpoints). Binance *spot* market-data
+  endpoints are not used as a stand-in for Binance futures.
+
+## 5. Live Telegram alert flow — sanity check (≈ 5 minutes)
 
 1. **Link.** Sign in → profile menu → **Account settings → Linked accounts** → **Connect Telegram**.
    Telegram opens `t.me/<YourBot>?start=…` → press **Start**.

@@ -8,9 +8,42 @@ import type { ExchangeId, FeedEvent, InstrumentMeta, OiPoint, RawCandle, RawTrad
 import { aggregate, candlesFromTrades, trimPartialHead } from '@/lib/market/exchanges/shared';
 import { limiter, RateLimitedError } from '@/lib/server/scan/limiter';
 import { recordBackfill, recordedCandles, recordsTrades, trackTrades, wasBackfilled } from './tradeRecorder';
+import { beforeRequest, isVenueRestricted, RECHECK_MS, reportResult, RestrictedError, venueHealth } from './venueHealth';
 
 export class UpstreamError extends Error {
-  constructor(message: string, readonly status = 502) { super(message); }
+  /** 'restricted': the exchange refuses this server's region — permanent until it says otherwise. */
+  readonly code?: 'restricted';
+  /** For 'restricted': when the server checks again. */
+  readonly retryAt?: number;
+  constructor(message: string, readonly status = 502, extra: { code?: 'restricted'; retryAt?: number } = {}) {
+    super(message);
+    this.code = extra.code;
+    this.retryAt = extra.retryAt;
+  }
+}
+
+/** Machine-readable code of a region refusal in API answers (the browser shows it as "restricted", not "down"). */
+export const VENUE_RESTRICTED = 'VENUE_RESTRICTED';
+
+function restrictedJson(venue: ExchangeId | null, message: string, retryAt: number): Response {
+  const retryAfter = Math.max(1, Math.ceil((retryAt - Date.now()) / 1000));
+  return Response.json(
+    { error: message, code: VENUE_RESTRICTED, ...(venue ? { venue } : {}), retryAt },
+    { status: 503, headers: { 'retry-after': String(retryAfter), 'cache-control': 'no-store' } },
+  );
+}
+
+const restrictionMessage = (venue: ExchangeId, status: number) =>
+  `${ADAPTERS[venue].name} doesn’t serve market data to this server’s region (HTTP ${status}). Other exchanges are unaffected.`;
+
+/**
+ * Checked by the market routes before any work: the venue's API refuses this server, so answer
+ * at once (no upstream call, no cache entry). null: go ahead.
+ */
+export function venueRestrictedResponse(venue: ExchangeId): Response | null {
+  if (!isVenueRestricted(venue)) return null;
+  const h = venueHealth(venue);
+  return restrictedJson(venue, restrictionMessage(venue, h.status ?? 451), h.retryAt ?? Date.now());
 }
 
 /**
@@ -18,7 +51,10 @@ export class UpstreamError extends Error {
  * function reach the route as Next's generic production error (neither an UpstreamError nor a
  * readable message), so anything that isn't our own UpstreamError gets a plain message.
  */
-export function upstreamErrorResponse(e: unknown): Response {
+export function upstreamErrorResponse(e: unknown, venue: ExchangeId | null = null): Response {
+  if (e instanceof UpstreamError && e.code === 'restricted') return restrictedJson(venue, e.message, e.retryAt ?? Date.now());
+  // A refusal thrown inside a 'use cache' function loses its type: the breaker still knows.
+  if (venue && isVenueRestricted(venue)) return venueRestrictedResponse(venue)!;
   return e instanceof UpstreamError
     ? Response.json({ error: e.message }, { status: e.status })
     : Response.json({ error: 'The exchange didn’t respond' }, { status: 502 });
@@ -33,6 +69,13 @@ export const isBaseSymbol = (s: string): boolean => /^[\p{Lu}\p{Lo}\p{N}]{1,20}$
  * fail fast with a 429 while the venue is rate-limited.
  */
 export async function upstreamJson(url: string, timeoutMs = 10_000): Promise<unknown> {
+  // The exchange refuses this server's region: don't ask again until the next check (venueHealth.ts).
+  try {
+    beforeRequest(url);
+  } catch (e) {
+    if (e instanceof RestrictedError) throw new UpstreamError(`Refused by the exchange from this server’s region (HTTP ${e.status})`, 503, { code: 'restricted', retryAt: e.retryAt });
+    throw e;
+  }
   try {
     await limiter().acquire(url);
   } catch (e) {
@@ -43,13 +86,18 @@ export async function upstreamJson(url: string, timeoutMs = 10_000): Promise<unk
   try {
     res = await fetch(url, { headers: { accept: 'application/json', 'user-agent': 'Screenerix/1.0' }, signal: AbortSignal.timeout(timeoutMs) });
   } catch (e) {
+    reportResult(url, 'network');
     throw new UpstreamError(`Upstream unreachable: ${e instanceof Error ? e.message : String(e)}`);
   }
+  reportResult(url, res.status);
   // Rate limits pass through as-is so clients back off; a rejected symbol (400 / 404) is a 404; other failures are a 502.
   if (!res.ok) {
     // An unread body holds its socket and buffers until GC.
     void res.body?.cancel().catch(() => {});
     limiter().report(url, res.status, res.headers.get('retry-after'));
+    if (res.status === 451 || res.status === 403) {
+      throw new UpstreamError(`Refused by the exchange from this server’s region (HTTP ${res.status})`, 503, { code: 'restricted', retryAt: Date.now() + RECHECK_MS });
+    }
     const status = res.status === 429 || res.status === 418 ? res.status : res.status === 400 || res.status === 404 ? 404 : 502;
     throw new UpstreamError(`Upstream HTTP ${res.status}`, status);
   }

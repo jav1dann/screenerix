@@ -35,10 +35,13 @@ export default function VenuePills({ label, hint, market, status, isSelected, on
         const disabled = venueMarket !== market;
         const selected = !disabled && isSelected(id);
         const st = status[id];
-        const dot = st.state !== 'idle' ? st.state : undefined;
+        // A regional refusal isn't an outage: its own dot and wording (no "Error" / "Reconnecting").
+        const dot = st.restricted ? 'restricted' : st.state !== 'idle' ? st.state : undefined;
         const title = disabled
           ? (venueMarket === 'spot' ? `${a.name} is spot-only — switch to Spot` : `Spot coming soon on ${a.name}`)
-          : `${a.name} ${a.market === 'perp' ? 'USDT perpetuals' : 'spot (USD)'} · ${STATE_LABEL[st.state] ?? st.state}${st.error ? ` — ${st.error}` : ''}`;
+          : st.restricted
+            ? `${a.name} doesn’t serve market data to our servers’ region — not available here. Other exchanges work normally.`
+            : `${a.name} ${a.market === 'perp' ? 'USDT perpetuals' : 'spot (USD)'} · ${STATE_LABEL[st.state] ?? st.state}${st.error ? ` — ${st.error}` : ''}`;
         return (
           <button
             key={id}
@@ -52,6 +55,7 @@ export default function VenuePills({ label, hint, market, status, isSelected, on
             onClick={() => { if (!disabled) onPick(id); }}
           >
             <span className="sx-dot" data-status={dot} /><ExchangeIcon id={id} size={14} />{a.name}
+            {!disabled && st.restricted && <span className="sx-muted" style={{ fontSize: 10, fontWeight: 400 }} data-venue-restricted={id}>unavailable</span>}
             {id === primary && <span className="sx-muted" style={{ fontSize: 10, fontWeight: 400 }}>primary</span>}
           </button>
         );

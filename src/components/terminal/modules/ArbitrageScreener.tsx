@@ -1,15 +1,16 @@
+import { useEffect, useState } from 'react';
 import { fmtPct, fmtPrice, tone } from '@/lib/format';
 import { TAKER_FEES } from '@/lib/market/constants';
 import { ExchangeIcon, ExchangeLabel } from '@/components/shared/brand/BrandIcon';
 import { exchangeName } from '@/lib/market/exchanges';
 import type { MarketType } from '@/lib/alerts/alertStore';
-import type { Asset, ExchangeId, StatusMap, VenueQuote } from '@/lib/market/types';
+import { buildArbRows, MIN_QUOTES, OUTLIER, QUOTE_MAX_AGE_MS } from '@/lib/market/arbitrage';
+import type { ExchangeId, StatusMap, VenueQuote } from '@/lib/market/types';
 import { COLORS } from '@/lib/theme';
 import { h3, sectionTitle } from '../styles';
 import VenuePills from '../VenuePills';
 
 interface ArbitrageScreenerProps {
-  market: Asset[];
   /** Venues being compared (always includes the primary). */
   venues: readonly ExchangeId[];
   primary: ExchangeId;
@@ -18,49 +19,44 @@ interface ArbitrageScreenerProps {
   /** Add / remove a venue from the comparison. */
   onToggleVenue: (id: ExchangeId) => void;
   getQuote: (id: ExchangeId, symbol: string) => VenueQuote | null;
+  /** Base symbols each streaming venue lists (the rows come from all of them, not the primary). */
+  getListed: (id: ExchangeId) => string[];
 }
 
 /** Venues list hundreds of coins; rendering is capped to the most interesting spreads. */
 const MAX_ROWS = 100;
-/**
- * A quote this far from the median of the venues is treated as a different asset
- * (venues reuse tickers for unrelated tokens, e.g. two different "CAT"s), not an
- * arbitrage opportunity, and is left out of the spread.
- */
-const OUTLIER = 0.1;
+/** Re-evaluate quote freshness this often even when no new data arrives (a silent venue goes stale). */
+const CLOCK_MS = 5_000;
 
-const median = (xs: number[]): number => {
-  const s = [...xs].sort((a, b) => a - b);
-  const m = s.length >> 1;
-  return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
-};
+function useClock(ms: number): number {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), ms);
+    return () => clearInterval(id);
+  }, [ms]);
+  return now;
+}
 
-export default function ArbitrageScreener({ market, venues, primary, marketType, status, onToggleVenue, getQuote }: ArbitrageScreenerProps) {
+/** Why a selected venue contributes no quotes, in a few words (null: it does). */
+function venueProblem(id: ExchangeId, status: StatusMap, listed: number): string | null {
+  const st = status[id];
+  if (st.restricted) return `${exchangeName(id)} isn’t available from our servers’ region`;
+  if (st.state === 'error') return `${exchangeName(id)} is unavailable${st.error ? ` (${st.error})` : ''}`;
+  if (!listed) return `${exchangeName(id)} is loading`;
+  return null;
+}
+
+export default function ArbitrageScreener({ venues, primary, marketType, status, onToggleVenue, getQuote, getListed }: ArbitrageScreenerProps) {
+  // Re-render on a clock too: freshness is time-based, and a dead stream sends no updates.
+  // (At most CLOCK_MS behind: a quote newer than the clock simply counts as current.)
+  const now = useClock(CLOCK_MS);
   const multi = venues.length > 1;
   const cols = `0.7fr repeat(${venues.length}, minmax(0,1fr)) 0.8fr 0.8fr 1.4fr 0.7fr`;
-  const rows = market
-    .map((a) => {
-      const quotes = venues.map((e) => getQuote(e, a.symbol));
-      const all = quotes.flatMap((q, j) => (q ? [{ j, p: q.price }] : []));
-      const mid = all.length ? median(all.map((x) => x.p)) : 0;
-      const priced = all.filter((x) => Math.abs(x.p / mid - 1) <= OUTLIER);
-      const excluded = new Set(all.filter((x) => !priced.includes(x)).map((x) => x.j));
-      const fundings = quotes.flatMap((q) => (q && q.funding !== null ? [q.funding] : []));
-      let iMn = -1, iMx = -1, spread: number | null = null;
-      if (priced.length >= 2) {
-        const mn = priced.reduce((m, x) => (x.p < m.p ? x : m));
-        const mx = priced.reduce((m, x) => (x.p > m.p ? x : m));
-        iMn = mn.j; iMx = mx.j;
-        spread = (mx.p - mn.p) / mn.p;
-      }
-      return {
-        a, quotes, excluded, iMn, iMx, spread,
-        net: spread === null ? null : spread - TAKER_FEES,
-        fundDelta: fundings.length >= 2 ? Math.max(...fundings) - Math.min(...fundings) : null,
-      };
-    })
-    .sort((x, y) => (y.spread ?? -1) - (x.spread ?? -1));
-  // Every listed coin is compared; the table shows the widest spreads.
+  const listed = new Map(venues.map((id) => [id, getListed(id)]));
+  const available = (id: ExchangeId) => !status[id].restricted && status[id].state !== 'error' && (listed.get(id)?.length ?? 0) > 0;
+  const up = venues.filter(available);
+  const problems = venues.flatMap((id) => { const p = available(id) ? null : venueProblem(id, status, listed.get(id)?.length ?? 0); return p ? [p] : []; });
+  const rows = buildArbRows({ venues, available, listed: (id) => listed.get(id) ?? [], getQuote, now, fees: TAKER_FEES });
   const shownRows = rows.slice(0, MAX_ROWS);
   const usdNote = venues.includes('coinbase') ? ' · Coinbase quotes USD spot vs. USDT perps' : '';
 
@@ -70,7 +66,7 @@ export default function ArbitrageScreener({ market, venues, primary, marketType,
         <h3 style={h3}>Arbitrage Screener</h3>
         <span className="sx-muted" style={{ fontSize: 12 }}>
           {multi
-            ? `Ranked by spread across ${venues.length} selected exchanges · net of ${(TAKER_FEES * 100).toFixed(2)}% taker fees · quotes >${OUTLIER * 100}% off the median are ignored${usdNote}${rows.length > MAX_ROWS ? ` · top ${MAX_ROWS} of ${rows.length} coins` : ''}`
+            ? `Ranked by spread across ${up.length} of ${venues.length} selected exchanges · live quotes only (under ${QUOTE_MAX_AGE_MS / 60_000} min old), at least ${MIN_QUOTES} per spread · net of ${(TAKER_FEES * 100).toFixed(2)}% taker fees · quotes >${OUTLIER * 100}% off the median are ignored${usdNote}${rows.length > MAX_ROWS ? ` · top ${MAX_ROWS} of ${rows.length} coins` : ''}`
             : 'Select at least two exchanges to compare spreads'}
         </span>
       </div>
@@ -90,26 +86,44 @@ export default function ArbitrageScreener({ market, venues, primary, marketType,
         <div style={{ minWidth: 760 }}>
           <div className="sx-muted" style={{ display: 'grid', gridTemplateColumns: cols, gap: 8, padding: '10px 14px', fontSize: 11, borderBottom: `1px solid ${COLORS.line}` }}>
             <span>Pair</span>
-            {venues.map((e) => <ExchangeLabel key={e} id={e} size={13} />)}
+            {venues.map((e) => (
+              <span key={e} style={{ display: 'flex', flexDirection: 'column', minWidth: 0 }} title={venueProblem(e, status, listed.get(e)?.length ?? 0) ?? undefined}>
+                <ExchangeLabel id={e} size={13} />
+                {status[e].restricted ? <span style={{ fontSize: 10, color: COLORS.down }} data-arb-restricted={e}>restricted</span>
+                  : !available(e) ? <span style={{ fontSize: 10 }}>{status[e].state === 'error' ? 'unavailable' : 'loading…'}</span> : null}
+              </span>
+            ))}
             <span>Spread</span><span>Funding Δ</span><span>Route</span><span style={{ textAlign: 'right' }}>Net</span>
           </div>
           <div style={{ padding: '4px 6px' }}>
-            {rows.length === 0 && <div className="sx-muted" style={{ padding: '16px 8px' }}>Waiting for quotes…</div>}
+            {rows.length === 0 && (
+              <div className="sx-muted" style={{ padding: '16px 8px', display: 'flex', flexDirection: 'column', gap: 6 }} role="status" data-arb-empty>
+                {up.length < MIN_QUOTES
+                  ? <span>Spreads need live quotes from at least {MIN_QUOTES} exchanges — {up.length === 0 ? 'none' : `only ${exchangeName(up[0])}`} of the selected ones {up.length === 1 ? 'is' : 'are'} streaming. {venues.length < 3 ? 'Select more exchanges above.' : ''}</span>
+                  : <span>Loading quotes from {up.map(exchangeName).join(', ')}…</span>}
+                {problems.length > 0 && <span style={{ fontSize: 11 }}>{problems.join(' · ')}.</span>}
+              </div>
+            )}
+            {rows.length > 0 && problems.length > 0 && (
+              <div className="sx-muted" style={{ padding: '6px 8px', fontSize: 11 }} data-arb-problems>Not compared: {problems.join(' · ')}.</div>
+            )}
             {shownRows.map((r) => {
               const hot = r.spread !== null && r.spread > 0.0025;
               return (
-                <div key={r.a.symbol} className="sx-row" style={{ gridTemplateColumns: cols, gap: 8, cursor: 'default' }}>
-                  <span style={{ fontWeight: 700 }}>{r.a.symbol}</span>
-                  {r.quotes.map((q, j) => (
-                    <span key={venues[j]} style={{ display: 'flex', flexDirection: 'column' }}>
-                      {q ? <>
-                        {r.excluded.has(j) ? (
+                <div key={r.symbol} className="sx-row" style={{ gridTemplateColumns: cols, gap: 8, cursor: 'default' }} data-arb-row={r.symbol}>
+                  <span style={{ fontWeight: 700 }}>{r.symbol}</span>
+                  {r.cells.map(({ quote: q, state }, j) => (
+                    <span key={venues[j]} style={{ display: 'flex', flexDirection: 'column' }} data-arb-cell={state}>
+                      {q && state !== 'unavailable' && state !== 'none' ? <>
+                        {state === 'outlier' ? (
                           <span className="sx-muted" style={{ textDecoration: 'line-through' }} title="Left out: more than 10% from the other venues — likely a different token or contract on this exchange">{fmtPrice(q.price)}</span>
+                        ) : state === 'stale' ? (
+                          <span className="sx-muted" style={{ opacity: 0.55 }} title="Not current: no live update from this exchange recently (or since it reconnected) — left out of the spread">{fmtPrice(q.price)}</span>
                         ) : (
                           <span style={{ color: multi && j === r.iMn ? COLORS.up : multi && j === r.iMx ? COLORS.down : COLORS.text }}>{fmtPrice(q.price)}</span>
                         )}
                         <span className="sx-muted" style={{ fontSize: 10 }}>{q.funding === null ? '—' : fmtPct(q.funding, 4)}</span>
-                      </> : <span className="sx-muted">—</span>}
+                      </> : <span className="sx-muted" title={state === 'unavailable' ? venueProblem(venues[j], status, listed.get(venues[j])?.length ?? 0) ?? undefined : 'No quote for this coin on this exchange'}>—</span>}
                     </span>
                   ))}
                   <span>{r.spread === null ? <span className="sx-muted">—</span> : <span className="sx-badge" style={{ color: hot ? COLORS.up : COLORS.text, background: hot ? COLORS.upBg : 'rgba(255,255,255,0.04)' }}>{fmtPct(r.spread, 3)}</span>}</span>

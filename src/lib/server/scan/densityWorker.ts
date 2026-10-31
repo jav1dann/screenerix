@@ -60,6 +60,7 @@ export function startDensityWorker(venue: ExchangeId, market: DensityMarket): De
   // Lifetimes survive a restart: start from the persisted densities.
   const persisted = new Map((store.get<DensityEntryData>(key)?.data.coins ?? []).map((c) => [c.s, c]));
   let universeError: string | undefined;
+  let restrictedUntil = 0;
   let stopped = false;
   let dirty = false;
   let fetches = 0;
@@ -93,12 +94,16 @@ export function startDensityWorker(venue: ExchangeId, market: DensityMarket): De
         }
         for (const s of coins.keys()) if (!keep.has(s)) coins.delete(s);
         universeError = undefined;
+        restrictedUntil = 0;
       } catch (e) {
         errors++;
         universeError = e instanceof Error ? e.message : 'Universe unavailable';
+        const { code, retryAt } = (e ?? {}) as { code?: unknown; retryAt?: unknown };
+        restrictedUntil = code === 'restricted' && typeof retryAt === 'number' ? retryAt : 0;
       }
       dirty = true;
-      await sleep(universeError ? 15_000 : UNIVERSE_MS);
+      // Refused from this server's region: wait for the venue's next check, not 15 s.
+      await sleep(universeError ? (restrictedUntil ? Math.max(15_000, restrictedUntil - Date.now()) : 15_000) : UNIVERSE_MS);
     }
   }
 
@@ -148,8 +153,9 @@ export function startDensityWorker(venue: ExchangeId, market: DensityMarket): De
         evaluate(c, book, c.at);
       } catch (e) {
         errors++;
-        const status = (e as { status?: unknown } | null)?.status;
+        const { status, code, retryAt } = (e ?? {}) as { status?: unknown; code?: unknown; retryAt?: unknown };
         if (status === 404 || status === 400) c.final = true;
+        else if (code === 'restricted' && typeof retryAt === 'number') c.retryAt = retryAt;
         else c.retryAt = Date.now() + (status === 429 || status === 418 ? 30_000 : RETRY_MS);
       } finally {
         c.busy = false;

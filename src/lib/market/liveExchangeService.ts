@@ -18,7 +18,7 @@ import { ADAPTERS, EXCHANGE_IDS, TIMEFRAME_MS } from './exchanges';
 import type { ExchangeAdapter, ExchangeId, FeedEvent, InstrumentMeta } from './exchanges';
 import { createEmitter } from './feed';
 import type { FeedConfig, MarketFeed } from './feed';
-import { fetchInstruments, fetchKlines, fetchTickers } from './marketApi';
+import { fetchInstruments, fetchKlines, fetchTickers, restrictionOf } from './marketApi';
 import { openChannel } from './socketHub';
 import type { SocketChannel } from './socketHub';
 import type { AlertItem, Asset, Candle, OrderBook, StatusMap, VenueStatus } from './types';
@@ -37,13 +37,15 @@ const BOOK_TOP = 30; // primary-venue symbols with a streamed order book (plus t
 const RERANK_MS = 5 * 60_000; // how often the volume ranking (Market Map order) is refreshed
 const INST_RETRY_MS = 2_000; // market list failed: first automatic retry, doubling…
 const INST_RETRY_MAX_MS = 60_000; // …up to once a minute (Retry in the UI goes at once)
+/** A venue that refuses our server's region is asked again when the server re-checks — and never more often than this. */
+const RESTRICTED_RETRY_MIN_MS = 60_000;
 
 const minuteOf = (t: number) => Math.floor(t / MINUTE) * MINUTE;
 
 /* ───────────────────────── Venue state ───────────────────────── */
 
-/** `open24h` is NaN until the venue reports it. */
-interface Quote { last: number; prev: number; open24h: number; quoteVol: number; funding: number | null }
+/** `open24h` is NaN until the venue reports it. `at`: when `last` arrived (0: its stream dropped since — stale). */
+interface Quote { last: number; prev: number; open24h: number; quoteVol: number; funding: number | null; at: number }
 interface LocalBook { bids: Map<number, number>; asks: Map<number, number> }
 interface History { closes: number[]; minute: number }
 
@@ -52,6 +54,8 @@ interface Venue {
   adapter: ExchangeAdapter;
   instStatus: 'idle' | 'loading' | 'ready' | 'error';
   instError?: string;
+  /** Set with instStatus 'error' when the exchange refuses our server's region: the server's next check. */
+  restricted?: { retryAt?: number };
   /** Failed market-list loads in a row (automatic retry backoff) and the pending retry. */
   instFailures: number;
   instRetry?: ReturnType<typeof setTimeout>;
@@ -120,7 +124,12 @@ export function createLiveFeed(): MarketFeed {
       v.sockets.push(openChannel(adapter, url, {
         onEvents: (events) => handleEvents(v, events),
         onChange: notify,
-        onReset: () => { if (url === adapter.ws.bookUrl) v.books.clear(); notify(); },
+        onReset: () => {
+          if (url === adapter.ws.bookUrl) v.books.clear();
+          // Prices received before the drop are no longer current: stale until the stream updates them.
+          if (url === adapter.ws.tickerUrl) v.quotes.forEach((q) => { q.at = 0; });
+          notify();
+        },
       }));
     }
     venues.set(id, v);
@@ -146,7 +155,10 @@ export function createLiveFeed(): MarketFeed {
       // Recovered after failures: the 1m history was tried against the dead venue too — reload it.
       if (v.snapFailures && historyFor === v.id) historyFor = '';
       v.snapFailures = 0;
-    } catch {
+    } catch (e) {
+      // Refused from our server's region now (it served the market list before): the venue is restricted.
+      const restricted = restrictionOf(e);
+      if (restricted) { markRestricted(v, restricted, e); return; }
       // Live tickers may fill in; if they don't (venue down, sockets blocked) the snapshot retries.
       clearTimeout(v.snapRetry);
       const wait = Math.min(INST_RETRY_MAX_MS, INST_RETRY_MS * 2 ** v.snapFailures++);
@@ -170,14 +182,43 @@ export function createLiveFeed(): MarketFeed {
       v.instruments = instruments;
       v.byInst = new Map(Object.entries(instruments).map(([base, m]) => [m.inst, base]));
       v.rank = Object.keys(instruments);
+      v.restricted = undefined;
       v.instStatus = Object.keys(instruments).length ? 'ready' : 'error';
       if (v.instStatus === 'error') v.instError = 'No active symbols listed';
       else { v.instFailures = 0; void loadSnapshot(v); }
     } catch (e) {
+      const restricted = restrictionOf(e);
+      if (restricted) { markRestricted(v, restricted, e); return; }
       v.instStatus = 'error';
       v.instError = `Market list unavailable: ${e instanceof Error ? e.message : String(e)}`;
     }
     if (v.instStatus === 'error') scheduleInstRetry(v);
+    apply();
+  }
+
+  /**
+   * The exchange refuses our server's region (HTTP 451 / 403): not an outage — show it as
+   * restricted, drop its data and stream topics, and ask again only when the server re-checks.
+   * Other venues are untouched.
+   */
+  function markRestricted(v: Venue, restricted: { retryAt?: number }, e: unknown): void {
+    v.instStatus = 'error';
+    v.instError = e instanceof Error ? e.message : 'Not available from our servers’ region';
+    v.restricted = restricted;
+    v.instruments = {}; v.byInst = new Map(); v.rank = []; v.ranked = false;
+    v.quotes.clear(); v.books.clear(); v.history.clear(); v.candles.clear();
+    v.sockets.forEach((s) => s.setTopics(new Set()));
+    if (historyFor === v.id) historyFor = '';
+    if (candlesFor.startsWith(`${v.id}|`)) candlesFor = '';
+    clearTimeout(v.snapRetry); v.snapRetry = undefined; v.snapFailures = 0;
+    clearTimeout(v.instRetry);
+    const wait = Math.max(RESTRICTED_RETRY_MIN_MS, (restricted.retryAt ?? 0) - Date.now());
+    v.instRetry = setTimeout(() => {
+      v.instRetry = undefined;
+      if (v.instStatus !== 'error') return;
+      v.instStatus = 'idle';
+      apply();
+    }, wait);
     apply();
   }
 
@@ -212,9 +253,10 @@ export function createLiveFeed(): MarketFeed {
         const now = minuteOf(Date.now());
         if (now > minute) { closes.push(q.last); minute = now; } else closes[closes.length - 1] = q.last;
       } else {
-        // Quiet contracts may not tick for a while — show the last close until they do.
+        // Quiet contracts may not tick for a while — show the last close until they do. A historical
+        // close is not a current quote: `at` 0 keeps it out of anything that needs one (arbitrage).
         const last = closes[closes.length - 1];
-        v.quotes.set(symbol, { last, prev: last, open24h: q?.open24h ?? NaN, quoteVol: q?.quoteVol ?? 0, funding: q?.funding ?? null });
+        v.quotes.set(symbol, { last, prev: last, open24h: q?.open24h ?? NaN, quoteVol: q?.quoteVol ?? 0, funding: q?.funding ?? null, at: 0 });
       }
       v.history.set(symbol, { closes: closes.slice(-HISTORY_LEN), minute });
       notify();
@@ -290,7 +332,7 @@ export function createLiveFeed(): MarketFeed {
       if (!symbol) continue;
       const meta = v.instruments[symbol];
       if (ev.kind === 'ticker') {
-        const q = v.quotes.get(symbol) ?? { last: NaN, prev: NaN, open24h: NaN, quoteVol: 0, funding: null };
+        const q = v.quotes.get(symbol) ?? { last: NaN, prev: NaN, open24h: NaN, quoteVol: 0, funding: null, at: 0 };
         if (ev.quoteVol !== undefined) q.quoteVol = ev.quoteVol;
         if (ev.open24h !== undefined && ev.open24h > 0) q.open24h = ev.open24h * meta.priceScale;
         if (ev.funding !== undefined) q.funding = ev.funding;
@@ -298,6 +340,7 @@ export function createLiveFeed(): MarketFeed {
           const price = ev.last * meta.priceScale;
           q.prev = Number.isFinite(q.last) ? q.last : price;
           q.last = price;
+          q.at = Date.now();
           v.quotes.set(symbol, q);
           onPrice(v, symbol, price);
         } else {
@@ -374,7 +417,7 @@ export function createLiveFeed(): MarketFeed {
   function venueStatus(id: ExchangeId, active: Set<ExchangeId>): VenueStatus {
     const v = venues.get(id);
     if (!v || !active.has(id)) return { state: 'idle' };
-    if (v.instStatus === 'error') return { state: 'error', error: v.instError };
+    if (v.instStatus === 'error') return { state: 'error', error: v.instError, ...(v.restricted ? { restricted: v.restricted } : {}) };
     if (v.instStatus !== 'ready') return { state: 'connecting' };
     const live = v.sockets.filter((s) => s.state !== 'idle');
     if (!live.length) return { state: 'connecting' };
@@ -453,9 +496,16 @@ export function createLiveFeed(): MarketFeed {
       return list;
     },
     getQuote(id, symbol) {
-      const v = activeIds().has(id) ? venues.get(id) : undefined;
+      const active = activeIds();
+      const v = active.has(id) ? venues.get(id) : undefined;
       const q = v?.quotes.get(symbol);
-      return q && Number.isFinite(q.last) ? { price: q.last, funding: q.funding } : null;
+      return v && q && Number.isFinite(q.last)
+        ? { price: q.last, funding: q.funding, at: q.at, live: venueStatus(id, active).state === 'live' }
+        : null;
+    },
+    getListed(id) {
+      const v = activeIds().has(id) ? venues.get(id) : undefined;
+      return v?.instStatus === 'ready' ? Object.keys(v.instruments) : [];
     },
     getCandles(symbol, tf) {
       return primaryVenue()?.candles.get(`${symbol}|${tf}`) ?? null;

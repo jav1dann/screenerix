@@ -42,8 +42,23 @@ export interface TickerRow {
   /** NATR (%) of 5m candles over 14 periods; null until scanned. */
   natr: number | null;
 }
-export interface VenueQuote { price: number; funding: number | null }
+export interface VenueQuote {
+  price: number;
+  funding: number | null;
+  /** When this price arrived from the exchange (ms); 0 once its stream dropped (stale until the next update). */
+  at: number;
+  /** The venue's stream is connected right now. */
+  live: boolean;
+}
 
 export type ConnState = 'idle' | 'connecting' | 'live' | 'reconnecting' | 'error';
-export interface VenueStatus { state: ConnState; error?: string }
+export interface VenueStatus {
+  state: ConnState;
+  error?: string;
+  /**
+   * The exchange refuses our server's region (HTTP 451 / 403) — not an outage: retrying won't help
+   * until the server's next check (`retryAt`). Set together with state 'error'.
+   */
+  restricted?: { retryAt?: number };
+}
 export type StatusMap = Record<ExchangeId, VenueStatus>;

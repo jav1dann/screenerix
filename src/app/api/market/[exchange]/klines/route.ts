@@ -1,6 +1,6 @@
 import type { NextRequest } from 'next/server';
 import { isExchangeId, isSubMinute, isTimeframe } from '@/lib/market/exchanges';
-import { getKlines, getSubMinuteCandles, isBaseSymbol, parseCursor, upstreamErrorResponse } from '@/lib/market/server/marketData';
+import { getKlines, getSubMinuteCandles, isBaseSymbol, parseCursor, upstreamErrorResponse, venueRestrictedResponse } from '@/lib/market/server/marketData';
 
 /**
  * GET /api/market/:exchange/klines?symbol=BTC&tf=1m&limit=90 → { candles } (oldest first).
@@ -21,6 +21,9 @@ export async function GET(req: NextRequest, ctx: RouteContext<'/api/market/[exch
   const end = endParam === null ? undefined : Number(endParam);
 
   if (!isExchangeId(exchange)) return Response.json({ error: 'Unknown exchange' }, { status: 400 });
+  // The exchange refuses this server's region: say so at once (no upstream call, no retry storm).
+  const restricted = venueRestrictedResponse(exchange);
+  if (restricted) return restricted;
   if (!isBaseSymbol(symbol)) return Response.json({ error: 'Invalid symbol' }, { status: 400 });
   if (isSubMinute(tf)) {
     try {
@@ -28,7 +31,7 @@ export async function GET(req: NextRequest, ctx: RouteContext<'/api/market/[exch
       if (cursor !== null && !parseCursor(cursor)) return Response.json({ error: 'Invalid cursor' }, { status: 400 });
       return Response.json(await getSubMinuteCandles(exchange, symbol, tf, cursor));
     } catch (e) {
-      return upstreamErrorResponse(e);
+      return upstreamErrorResponse(e, exchange);
     }
   }
   if (!isTimeframe(tf)) return Response.json({ error: 'Unsupported timeframe' }, { status: 400 });
@@ -38,6 +41,6 @@ export async function GET(req: NextRequest, ctx: RouteContext<'/api/market/[exch
   try {
     return Response.json({ candles: await getKlines(exchange, symbol, tf, limit, end) });
   } catch (e) {
-    return upstreamErrorResponse(e);
+    return upstreamErrorResponse(e, exchange);
   }
 }

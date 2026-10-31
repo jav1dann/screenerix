@@ -1,6 +1,6 @@
 import type { NextRequest } from 'next/server';
 import { isExchangeId } from '@/lib/market/exchanges';
-import { getInstrument, getInstruments, isBaseSymbol, upstreamErrorResponse } from '@/lib/market/server/marketData';
+import { getInstrument, getInstruments, isBaseSymbol, upstreamErrorResponse, venueRestrictedResponse } from '@/lib/market/server/marketData';
 
 /**
  * GET /api/market/:exchange/instruments            → { instruments } for the tracked universe
@@ -9,12 +9,15 @@ import { getInstrument, getInstruments, isBaseSymbol, upstreamErrorResponse } fr
 export async function GET(req: NextRequest, ctx: RouteContext<'/api/market/[exchange]/instruments'>) {
   const { exchange } = await ctx.params;
   if (!isExchangeId(exchange)) return Response.json({ error: 'Unknown exchange' }, { status: 400 });
+  // The exchange refuses this server's region: say so at once (no upstream call, no retry storm).
+  const restricted = venueRestrictedResponse(exchange);
+  if (restricted) return restricted;
   const symbol = req.nextUrl.searchParams.get('symbol')?.toUpperCase();
   if (symbol !== undefined && !isBaseSymbol(symbol)) return Response.json({ error: 'Invalid symbol' }, { status: 400 });
   try {
     if (symbol) return Response.json({ instrument: await getInstrument(exchange, symbol) });
     return Response.json({ instruments: await getInstruments(exchange) });
   } catch (e) {
-    return upstreamErrorResponse(e);
+    return upstreamErrorResponse(e, exchange);
   }
 }

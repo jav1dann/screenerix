@@ -5,10 +5,17 @@ import type { ExchangeId, FeedEvent, InstrumentMeta, OiPoint, RawCandle, SubMinu
 export async function fetchJson<T>(url: string): Promise<T> {
   const res = await fetch(url);
   if (res.status === 401) sessionExpired();
-  const body = (await res.json().catch(() => ({}))) as T & { error?: string };
-  // The status rides along so callers can tell rate limits (429 / 418) from other failures.
-  if (!res.ok) throw Object.assign(new Error(body.error ?? `HTTP ${res.status}`), { status: res.status });
+  const body = (await res.json().catch(() => ({}))) as T & { error?: string; code?: string; retryAt?: number };
+  // The status rides along so callers can tell rate limits (429 / 418) from other failures, and
+  // `code` a venue that refuses our server's region ('VENUE_RESTRICTED', with the next check).
+  if (!res.ok) throw Object.assign(new Error(body.error ?? `HTTP ${res.status}`), { status: res.status, code: body.code, retryAt: body.retryAt });
   return body;
+}
+
+/** A request refused because the exchange doesn't serve our server's region: when the server checks again. null: another failure. */
+export function restrictionOf(e: unknown): { retryAt?: number } | null {
+  const err = e as { code?: unknown; retryAt?: unknown } | null;
+  return err?.code === 'VENUE_RESTRICTED' ? { retryAt: typeof err.retryAt === 'number' ? err.retryAt : undefined } : null;
 }
 
 export type Instruments = Record<string, InstrumentMeta>;

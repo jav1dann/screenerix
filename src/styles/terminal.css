@@ -35,6 +35,8 @@
 .sx-pill .sx-dot[data-status="live"]{background:var(--sx-up)}
 .sx-pill .sx-dot[data-status="connecting"],.sx-pill .sx-dot[data-status="reconnecting"]{background:#F5A524;animation:sx-pulse 1s ease-in-out infinite}
 .sx-pill .sx-dot[data-status="error"]{background:var(--sx-down)}
+/* Refused from our servers' region: not an outage — a hollow, static dot. */
+.sx-pill .sx-dot[data-status="restricted"]{background:transparent;box-shadow:inset 0 0 0 1.5px var(--sx-down)}
 @keyframes sx-pulse{50%{opacity:.35}}
 @media (prefers-reduced-motion:reduce){.sx-pill .sx-dot{animation:none!important}}
 .sx-skeleton{display:grid;place-items:center;border-radius:8px;background:rgba(255,255,255,0.025);color:var(--sx-muted);font-size:12px}

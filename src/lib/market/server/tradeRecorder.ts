@@ -21,6 +21,7 @@ import type { ExchangeId, FeedEvent, InstrumentMeta, RawCandle, SubMinute } from
 import { applyTrade } from '@/lib/market/exchanges/shared';
 import { openChannel } from '@/lib/market/socketHub';
 import type { SocketChannel } from '@/lib/market/socketHub';
+import { isVenueRestricted, onHealthChange } from './venueHealth';
 
 /** Buckets kept per coin: 6 h of 30s, 15 min of 1s. */
 export const RECORD_KEEP: Record<SubMinute, number> = { '30s': 720, '1s': 900 };
@@ -84,6 +85,8 @@ function sync(r: VenueRecorder, venue: ExchangeId, now = Date.now()): void {
     if (s.requestedUntil < now && !r.top.includes(base)) { r.series.delete(base); r.byInst.delete(s.meta.inst); }
   }
   const adapter = ADAPTERS[venue];
+  // The venue refuses this server's region: no socket (it would only reconnect forever). Resumes on recovery.
+  if (isVenueRestricted(venue, now)) { r.channel.setTopics(new Set()); return; }
   r.channel.setTopics(new Set([...r.series.values()].flatMap((s) => adapter.ws.tradeTopics(s.meta.inst))));
 }
 
@@ -134,7 +137,9 @@ export function startTradeRecorder(venue: ExchangeId, resolve: (base: string) =>
   const timer = setInterval(() => { void refreshTop(); }, TOP_REFRESH_MS);
   first.unref?.();
   timer.unref?.();
-  return () => { clearTimeout(first); clearInterval(timer); clearInterval(save); r.channel.close(); recorders.delete(venue); };
+  // Refused / recovered: close or reopen the socket straight away.
+  const offHealth = onHealthChange(() => sync(r, venue));
+  return () => { clearTimeout(first); clearInterval(timer); clearInterval(save); offHealth(); r.channel.close(); recorders.delete(venue); };
 }
 
 async function add(venue: ExchangeId, r: VenueRecorder, base: string, requestedUntil: number): Promise<Series | null> {

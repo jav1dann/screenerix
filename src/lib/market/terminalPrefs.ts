@@ -40,6 +40,12 @@ export interface TerminalPrefs {
   market: MarketType;
   /** Primary venue per market type (switching Futures ↔ Spot restores the previous choice). */
   venue: Record<MarketType, ExchangeId>;
+  /**
+   * The venue was picked by the user (or their Settings default), not just the built-in default:
+   * it's kept even when the exchange is unavailable from our servers. Unpicked ones may be
+   * switched to a reachable exchange automatically (venueChoice.ts).
+   */
+  venueChosen: Record<MarketType, boolean>;
   /** Market Map ranking. */
   sort: SortPref;
   /** Timeframe of the Market Map chart cards. */
@@ -48,16 +54,20 @@ export interface TerminalPrefs {
   grid: GridCount;
 }
 
-const DEFAULTS: TerminalPrefs = { market: 'futures', venue: { futures: 'binance', spot: 'coinbase' }, sort: { mode: 'range', window: '5m' }, tf: '1m', grid: 9 };
+const DEFAULTS: TerminalPrefs = { market: 'futures', venue: { futures: 'binance', spot: 'coinbase' }, venueChosen: { futures: false, spot: false }, sort: { mode: 'range', window: '5m' }, tf: '1m', grid: 9 };
 
 /** A stored venue that still trades `market`. */
 const venueFor = (v: unknown, market: MarketType): ExchangeId | null =>
   typeof v === 'string' && isExchangeId(v) && (ADAPTERS[v].market === 'perp') === (market === 'futures') ? v : null;
 
-function sanitize(raw: unknown): TerminalPrefs {
+/** Stored prefs → a valid TerminalPrefs (exported for tests). */
+export function sanitize(raw: unknown): TerminalPrefs {
   const r = (typeof raw === 'object' && raw !== null ? raw : {}) as Record<string, unknown>;
   const venue = (typeof r.venue === 'object' && r.venue !== null ? r.venue : {}) as Record<string, unknown>;
   const sort = (typeof r.sort === 'object' && r.sort !== null ? r.sort : {}) as Record<string, unknown>;
+  const chosen = (typeof r.venueChosen === 'object' && r.venueChosen !== null ? r.venueChosen : null) as Record<string, unknown> | null;
+  // Stored before this flag existed: a stored venue counts as the user's choice (never switched for them).
+  const chosenFor = (m: MarketType) => (chosen ? chosen[m] === true : venueFor(venue[m], m) !== null);
   // v1 stored only a Range window (`range`); it becomes a Range sort.
   const legacyRange = isRangeWindow(r.range) ? r.range : null;
   return {
@@ -66,6 +76,7 @@ function sanitize(raw: unknown): TerminalPrefs {
       futures: venueFor(venue.futures, 'futures') ?? DEFAULTS.venue.futures,
       spot: venueFor(venue.spot, 'spot') ?? DEFAULTS.venue.spot,
     },
+    venueChosen: { futures: chosenFor('futures'), spot: chosenFor('spot') },
     // The window is validated against its mode by the settings layer (`allowedSort`).
     sort: SORT_MODE_IDS.includes(sort.mode as SortMode) && typeof sort.window === 'string'
       ? { mode: sort.mode as SortMode, window: sort.window }

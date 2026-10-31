@@ -273,7 +273,13 @@ export default function TickerSidebar(p: SidebarProps) {
           )}
           {p.total === 0 && (
             <div style={{ padding: '24px 8px', display: 'flex', flexDirection: 'column', gap: 10, alignItems: 'flex-start' }}>
-              {p.status.state === 'error' ? (
+              {p.status.restricted ? (
+                <>
+                  <span style={{ color: COLORS.down }} data-sidebar-restricted>{ADAPTERS[p.venue].name} isn’t available from our servers’ region.</span>
+                  <span className="sx-muted" style={{ fontSize: 11 }}>The exchange refuses market-data requests from it. Pick another exchange above — they work normally.</span>
+                  <button type="button" className="sx-btn" onClick={p.onRetry}>Check again</button>
+                </>
+              ) : p.status.state === 'error' ? (
                 <>
                   <span style={{ color: COLORS.down }}>Can’t reach {ADAPTERS[p.venue].name}.</span>
                   {p.status.error && <span className="sx-muted" style={{ fontSize: 11 }}>{p.status.error}</span>}
