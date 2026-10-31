@@ -6,6 +6,12 @@ export const az: Dict = {
     title: 'Screenerix — Real vaxt kripto skriner və treydinq terminalı',
     description: 'Binance, Bybit, OKX, Bitget, Gate və Coinbase üzrə bazar xəritəsi, order book sıxlıqları, 80+ filtr və ani bildirişlər — skalperlər və gündaxili treyderlər üçün bir sürətli terminalda.',
   },
+  promo: {
+    text: '3 gün pulsuz sınayın — bank kartı tələb olunmur',
+    cta: 'Sınağı başlat',
+    label: 'Elan',
+    close: 'Elanı bağla',
+  },
   preloader: {
     label: 'Screenerix yüklənir',
     steps: ['Bazar axınlarına qoşulur…', 'Order book-lar sinxronlaşdırılır…', 'Terminal işə salınır…'],

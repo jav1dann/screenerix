@@ -1,6 +1,6 @@
 /* Screenerix — public landing page */
 @layer components {
-.lx-root{position:relative;overflow-x:hidden;min-height:100vh;background:var(--sx-bg);color:var(--sx-text);font-family:var(--font-archivo),system-ui,sans-serif;font-size:15px;line-height:1.55;font-variant-numeric:tabular-nums;-webkit-font-smoothing:antialiased}
+.lx-root{position:relative;overflow-x:clip;min-height:100vh;background:var(--sx-bg);color:var(--sx-text);font-family:var(--font-archivo),system-ui,sans-serif;font-size:15px;line-height:1.55;font-variant-numeric:tabular-nums;-webkit-font-smoothing:antialiased}
 .lx-root *{box-sizing:border-box}
 .lx-root:lang(ru),.lx-root [lang="ru"]{font-family:var(--font-cyr),var(--font-archivo),system-ui,sans-serif}
 .lx-root h1,.lx-root h2,.lx-root h3,.lx-root h4{margin:0;font-weight:800;letter-spacing:-0.02em}
@@ -145,6 +145,22 @@
 .lx-legal mark{background:rgba(245,197,66,0.14);color:var(--sx-alert);padding:0 4px;border-radius:4px}
 @media (max-width:640px){.lx-legal{padding:32px 16px 72px}}
 /* Consent checkbox */
+/* Promo bar above the header (scrolls away; the header stays sticky). */
+html[data-promo-off] .lx-promo{display:none}
+.lx-promo{position:relative;z-index:51;color:#fff;background:linear-gradient(90deg,#1B6B47 0%,#2A9662 35%,#30A46C 50%,#2A9662 65%,#1B6B47 100%);border-bottom:1px solid rgba(255,255,255,0.12)}
+.lx-promo::after{content:"";position:absolute;inset:0;pointer-events:none;background:linear-gradient(90deg,transparent,rgba(255,255,255,0.14),transparent);background-size:40% 100%;background-repeat:no-repeat;animation:lx-promo-shine 6s ease-in-out infinite}
+@keyframes lx-promo-shine{0%{background-position:-40% 0}60%,100%{background-position:140% 0}}
+.lx-promo-inner{display:flex;align-items:center;justify-content:center;flex-wrap:wrap;gap:6px 14px;min-height:40px;padding:6px 52px;text-align:center}
+.lx-promo-text{display:inline-flex;align-items:center;gap:8px;font-size:13.5px;font-weight:600;letter-spacing:-0.005em}
+.lx-promo-dot{width:7px;height:7px;flex:none;border-radius:50%;background:#fff;box-shadow:0 0 0 3px rgba(255,255,255,0.25)}
+.lx-promo-cta{display:inline-flex;align-items:center;gap:6px;font-size:12.5px;font-weight:700;padding:4px 10px 4px 12px;border-radius:999px;border:0;background:#fff;color:#0B0C0E;cursor:pointer;white-space:nowrap;transition:transform .15s,box-shadow .15s}
+.lx-promo-cta:hover{transform:translateX(1px);box-shadow:0 4px 14px rgba(0,0,0,0.2)}
+.lx-promo-cta svg{width:13px;height:13px}
+.lx-promo-x{position:absolute;right:10px;top:50%;transform:translateY(-50%);width:28px;height:28px;display:grid;place-items:center;border-radius:7px;border:0;background:transparent;color:rgba(255,255,255,0.8);cursor:pointer}
+.lx-promo-x:hover{background:rgba(255,255,255,0.15);color:#fff}
+.lx-root .lx-promo :focus-visible{outline-color:#fff}
+@media (max-width:640px){.lx-promo-inner{padding:6px 44px 6px 16px;justify-content:flex-start;text-align:left}.lx-promo-text{font-size:12.5px}.lx-promo-x{right:6px}}
+@media (prefers-reduced-motion:reduce){.lx-promo::after{animation:none;display:none}}
 .lx-otp{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:8px}
 .lx-otp-box{text-align:center;font-size:22px;font-weight:600;padding:12px 0;font-variant-numeric:tabular-nums}
 .lx-link-btn{background:none;border:0;padding:0;font:inherit;font-weight:600;color:var(--sx-up);cursor:pointer}

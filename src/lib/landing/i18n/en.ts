@@ -9,6 +9,12 @@ export const en = {
     title: 'Screenerix — Real-time crypto screener & trading terminal',
     description: 'Market map, order book densities, 80+ filters and instant alerts across Binance, Bybit, OKX, Bitget, Gate and Coinbase — in one fast terminal for scalpers and day traders.',
   },
+  promo: {
+    text: 'Try 3 days free — no credit card required',
+    cta: 'Claim trial',
+    label: 'Announcement',
+    close: 'Dismiss announcement',
+  },
   preloader: {
     label: 'Loading Screenerix',
     steps: ['Connecting to market streams…', 'Syncing order books…', 'Initializing terminal…'],

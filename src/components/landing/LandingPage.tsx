@@ -20,6 +20,7 @@ import Features from './Features';
 import Hero from './Hero';
 import HowItWorks from './HowItWorks';
 import Preloader from './Preloader';
+import PromoBar from './PromoBar';
 import PreviewTabs from './PreviewTabs';
 import Pricing from './Pricing';
 import SiteFooter from './SiteFooter';
@@ -46,6 +47,8 @@ export default function LandingPage({ locale, dict, session, googleEnabled = fal
   // /terminal is gated: signed-out visitors land on /login (and come back after signing in).
   const onLaunchTerminal = () => router.push('/terminal');
   const onRegister = () => { setAuthNext(undefined); setAuth('register'); };
+  // Promo bar: sign up; already signed in → straight to the terminal.
+  const onClaimTrial = () => { void session.then((signedIn) => (signedIn ? router.push('/terminal') : onRegister())); };
   // Pro: signed in → checkout; signed out → register first, then checkout.
   const onSelectPro = (period: Period) => {
     const checkout = `/billing?period=${period}`;
@@ -61,6 +64,7 @@ export default function LandingPage({ locale, dict, session, googleEnabled = fal
       <div aria-hidden="true" className="lx-grid-bg" />
       <div aria-hidden="true" className="lx-glow" style={{ left: '50%', top: -200, width: 1100, height: 720, transform: 'translateX(-50%)', background: 'radial-gradient(closest-side, rgba(48,164,108,0.16), transparent 70%)' }} />
       <div aria-hidden="true" className="lx-glow" style={{ right: -260, top: 1400, width: 700, height: 700, background: 'radial-gradient(closest-side, rgba(48,164,108,0.07), transparent 70%)' }} />
+      <PromoBar t={dict.promo} onClaim={onClaimTrial} />
       <SiteHeader t={dict.nav} locale={locale} session={session} onOpenTerminal={onLaunchTerminal} onSignIn={() => { setAuthNext(undefined); setAuth('signin'); }} onRegister={onRegister} />
       <main>
         <Hero t={dict.hero} assets={assets} candles={candles} onLaunch={onLaunchTerminal} onRegister={onRegister} />
