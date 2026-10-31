@@ -6,15 +6,13 @@
  *   /api/auth/google/callback  → state check → code exchange → id_token claims → user → session
  *
  * `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` are read server-side only (never NEXT_PUBLIC_).
- * The redirect URI is `${AUTH_URL or the request origin}/api/auth/google/callback` and must
- * be registered on the OAuth client in Google Cloud Console. Server-only.
+ * The redirect URI is `${public origin}/api/auth/google/callback` (`publicOrigin`: AUTH_URL, else
+ * the host the visitor used) and must be registered on the OAuth client in Google Cloud Console
+ * exactly — scheme, host, no trailing slash. Server-only.
  */
 import 'server-only';
 import { createHash, randomBytes } from 'node:crypto';
-import { appOrigin } from '@/lib/server/origin';
 import { signBlob, verifyBlob } from './session';
-
-export { appOrigin };
 
 const AUTH_ENDPOINT = 'https://accounts.google.com/o/oauth2/v2/auth';
 const TOKEN_ENDPOINT = 'https://oauth2.googleapis.com/token';
@@ -89,12 +87,12 @@ export async function readOAuthState(cookie: string | undefined, now = Date.now(
   return { state, nonce, verifier, next, at, mode, ...(mode === 'link' ? { uid: uid as string } : {}) };
 }
 
-/** The redirect URI registered with Google. */
-export const redirectUri = (requestOrigin: string): string => `${appOrigin(requestOrigin)}${CALLBACK_PATH}`;
+/** The redirect URI registered with Google, for the app's public origin (`publicOrigin`). */
+export const redirectUri = (origin: string): string => `${origin}${CALLBACK_PATH}`;
 
-/** Back to /login with a `google_<code>` error (and the original destination). */
-export function loginErrorUrl(requestOrigin: string, code: GoogleErrorCode, next: string): string {
-  const u = new URL('/login', appOrigin(requestOrigin));
+/** Back to /login on the public origin with a `google_<code>` error (and the original destination). */
+export function loginErrorUrl(origin: string, code: GoogleErrorCode, next: string): string {
+  const u = new URL('/login', origin);
   u.searchParams.set('error', `google_${code}`);
   if (next !== '/terminal') u.searchParams.set('next', next);
   return u.toString();

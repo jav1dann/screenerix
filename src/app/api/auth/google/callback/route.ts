@@ -7,11 +7,12 @@
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 import { getCurrentUser, sessionCookie } from '@/lib/auth/dal';
-import { appOrigin, exchangeCode, GoogleAuthError, googleConfig, loginErrorUrl, OAUTH_COOKIE, OAUTH_COOKIE_PATH, readOAuthState, redirectUri } from '@/lib/auth/google';
+import { exchangeCode, GoogleAuthError, googleConfig, loginErrorUrl, OAUTH_COOKIE, OAUTH_COOKIE_PATH, readOAuthState, redirectUri } from '@/lib/auth/google';
 import type { GoogleErrorCode } from '@/lib/auth/google';
 import { isThrottled, recordFailure } from '@/lib/auth/throttle';
 import { ensureAdmin, findOrCreateGoogleUser, linkGoogle } from '@/lib/auth/users';
 import { clientIp } from '@/lib/server/clientIp';
+import { publicOrigin } from '@/lib/server/origin';
 
 /** Per-IP throttle keys — only behind a trusted proxy (`TRUST_PROXY`, see clientIp.ts). */
 function throttleKeys(req: NextRequest): string[] {
@@ -28,7 +29,8 @@ function redirect(url: string): NextResponse {
 }
 
 export async function GET(req: NextRequest) {
-  const origin = req.nextUrl.origin;
+  // Same origin as the start route, so the redirect_uri sent with the code matches exactly.
+  const origin = publicOrigin(req.headers, req.nextUrl.origin);
   const sp = req.nextUrl.searchParams;
   const saved = await readOAuthState(req.cookies.get(OAUTH_COOKIE)?.value);
   const next = saved?.next ?? '/terminal';
@@ -37,7 +39,7 @@ export async function GET(req: NextRequest) {
   // /login would just bounce them to the terminal without saying why.
   const linking = saved ? saved.mode === 'link' : Boolean(await getCurrentUser());
   const fail = (code: GoogleErrorCode) => redirect(linking
-    ? new URL(`/terminal?account=google_${code}`, appOrigin(origin)).toString()
+    ? new URL(`/terminal?account=google_${code}`, origin).toString()
     : loginErrorUrl(origin, code, next));
 
   // The user closed the consent screen (or Google refused the request).
@@ -63,7 +65,7 @@ export async function GET(req: NextRequest) {
 
   if (saved.mode === 'link') {
     // Connecting from the account screen: only to the same signed-in account that started it.
-    const back = (code: string) => redirect(new URL(`/terminal?account=${code}`, appOrigin(origin)).toString());
+    const back = (code: string) => redirect(new URL(`/terminal?account=${code}`, origin).toString());
     const current = await getCurrentUser();
     if (!current || current.id !== saved.uid) return back('google_session');
     const r = linkGoogle(current.id, profile.sub, profile.picture);
@@ -75,7 +77,7 @@ export async function GET(req: NextRequest) {
   await ensureAdmin();
   const { user, created } = findOrCreateGoogleUser(profile);
   if (created) console.log(`[auth] account created via Google: ${user.email}`);
-  const res = redirect(new URL(next, appOrigin(origin)).toString());
+  const res = redirect(new URL(next, origin).toString());
   const c = await sessionCookie(user);
   res.cookies.set(c.name, c.value, c.options);
   return res;

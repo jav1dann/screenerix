@@ -112,6 +112,41 @@ console.log = (...a: unknown[]) => {
   check('IPv6 grouped by /64 (no dodging by rotating addresses)', clientIp(h({ 'x-forwarded-for': '2001:db8:1:2:aaaa::1' }), proxyTrust('1')) === clientIp(h({ 'x-forwarded-for': '2001:db8:1:2:ffff:1:2:3' }), proxyTrust('1')) && clientIp(h({ 'x-forwarded-for': '2001:db8:1:2::9' }), proxyTrust('1')) === '2001:db8:1:2::/64');
   console.error = quiet;
 
+  section('Public origin for Google OAuth (AUTH_URL / proxy headers)');
+  const o = await import('@/lib/server/origin');
+  const saveEnv = { AUTH_URL: process.env.AUTH_URL, TRUST_PROXY: process.env.TRUST_PROXY, NODE_ENV: process.env.NODE_ENV };
+  const env = process.env as Record<string, string | undefined>;
+  console.error = () => {};
+  env.AUTH_URL = 'https://screenerix.com/';
+  check('AUTH_URL wins (trailing slash dropped)', o.publicOrigin(h({ host: 'localhost:3000' })) === 'https://screenerix.com');
+  check('…and the Google redirect URI matches the console exactly', (await import('@/lib/auth/google')).redirectUri(o.publicOrigin(h({}))) === 'https://screenerix.com/api/auth/google/callback');
+  check('AUTH_URL with a path → its origin', o.configuredOrigin('https://screenerix.com/app') === 'https://screenerix.com');
+  check('AUTH_URL without a scheme is refused (not turned into a broken URL)', o.configuredOrigin('screenerix.com') === null && o.configuredOrigin('ftp://x.com') === null);
+  delete env.AUTH_URL; delete env.TRUST_PROXY;
+  check('no AUTH_URL, no proxy: the Host the browser used (local dev)', o.publicOrigin(h({ host: 'localhost:3000' })) === 'http://localhost:3000');
+  check('…X-Forwarded-Host / -Proto ignored without TRUST_PROXY (a client could forge them)', o.publicOrigin(h({ host: 'localhost:3000', 'x-forwarded-host': 'evil.com', 'x-forwarded-proto': 'https' })) === 'http://localhost:3000');
+  env.TRUST_PROXY = '1';
+  check('TRUST_PROXY: X-Forwarded-Proto / -Host from the proxy (nginx default Host: localhost:3000)', o.publicOrigin(h({ host: 'localhost:3000', 'x-forwarded-host': 'screenerix.com', 'x-forwarded-proto': 'https' })) === 'https://screenerix.com');
+  check('TRUST_PROXY: proxy passing Host $host', o.publicOrigin(h({ host: 'screenerix.com', 'x-forwarded-proto': 'https' })) === 'https://screenerix.com');
+  check('a malformed host is refused (fallback)', o.publicOrigin(h({ host: 'bad host/../x' }), 'http://fallback:1') === 'http://fallback:1');
+  env.AUTH_URL = 'https://screenerix.com';
+  check('AUTH_URL still wins over proxy headers', o.publicOrigin(h({ host: 'localhost:3000', 'x-forwarded-host': 'other.example', 'x-forwarded-proto': 'http' })) === 'https://screenerix.com');
+  // The code exchange (callback) must send Google the very same redirect_uri as the start route.
+  env.AUTH_URL = 'https://screenerix.com';
+  const gauth = await import('@/lib/auth/google');
+  const startUri = new URL(gauth.googleAuthUrl({ clientId: 'cid', redirectUri: gauth.redirectUri(o.publicOrigin(h({ host: 'localhost:3000' }))), state: 's', nonce: 'n', verifier: 'v' })).searchParams.get('redirect_uri');
+  let sentUri: string | null = null;
+  const idToken = ['e30', Buffer.from(JSON.stringify({ iss: 'https://accounts.google.com', aud: 'cid', exp: Math.floor(Date.now() / 1000) + 600, nonce: 'n', sub: 'g-1', email: 'u@test.local', email_verified: true, name: 'U' })).toString('base64url'), 'sig'].join('.');
+  const profile = await gauth.exchangeCode({
+    code: 'c', verifier: 'v', nonce: 'n', clientId: 'cid', clientSecret: 'secret',
+    redirectUri: gauth.redirectUri(o.publicOrigin(h({ host: 'localhost:3000', 'x-forwarded-proto': 'https' }))),
+    fetchImpl: (async (_url: string, init: RequestInit) => { sentUri = new URLSearchParams(String(init.body)).get('redirect_uri'); return new Response(JSON.stringify({ id_token: idToken }), { status: 200 }); }) as typeof fetch,
+  });
+  check('start and code exchange send Google the identical redirect_uri', startUri === 'https://screenerix.com/api/auth/google/callback' && sentUri === startUri, `${startUri} / ${sentUri}`);
+  check('…and the verified Google identity comes back', profile.sub === 'g-1' && profile.email === 'u@test.local');
+  for (const [k, v] of Object.entries(saveEnv)) { if (v === undefined) delete env[k]; else env[k] = v; }
+  console.error = quiet;
+
   section('Throttle limits');
   const th = await import('@/lib/auth/throttle');
   const t0 = Date.now();

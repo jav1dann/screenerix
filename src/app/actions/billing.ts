@@ -17,7 +17,7 @@ import type { Order, OrderView } from '@/lib/billing/orders';
 import { isPeriod, PERIODS } from '@/lib/billing/plans';
 import type { Period } from '@/lib/billing/plans';
 import { paymentProvider, ProviderError, WEBHOOK_PATH } from '@/lib/billing/provider';
-import { appOrigin } from '@/lib/server/origin';
+import { publicOrigin } from '@/lib/server/origin';
 
 export type CheckoutResult<T> = { ok: true; data: T } | { ok: false; error: string; code?: 'unavailable' | 'auth' };
 
@@ -118,12 +118,11 @@ export async function createCryptoOrder(period: Period, network: NetworkId): Pro
   const net = networkOf(network);
   const priceUsd = PERIODS[period].usd;
   const h = await headers();
-  const origin = h.get('origin') ?? `${h.get('x-forwarded-proto') ?? 'http'}://${h.get('host') ?? 'localhost'}`;
   let pay;
   try {
     pay = await provider.create({
       orderId: id, usd: priceUsd, network: net,
-      callbackUrl: `${appOrigin(origin)}${WEBHOOK_PATH}`,
+      callbackUrl: `${publicOrigin(h)}${WEBHOOK_PATH}`,
       description: `Screenerix Pro · ${PERIODS[period].label}`,
     });
   } catch (e) {

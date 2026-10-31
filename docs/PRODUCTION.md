@@ -8,7 +8,7 @@ What to set, check and click before and after a deploy. Variables are documented
 | Variable | When it's read | Notes |
 | --- | --- | --- |
 | `AUTH_SECRET` | runtime | 32+ random characters. Unset in production = an error in the log. |
-| `AUTH_URL` | runtime | Public HTTPS origin, e.g. `https://screenerix.com` (Google redirect, payment webhooks, "Open Screenerix" links in Telegram). |
+| `AUTH_URL` | runtime | **Required.** Public HTTPS origin, exactly the domain visitors use, e.g. `https://screenerix.com` (Google redirect URI `https://screenerix.com/api/auth/google/callback`, payment webhooks, "Open Screenerix" links in Telegram). Unset, the app falls back to the request host — under `next start` that's `http://localhost:3000`. |
 | `ADMIN_EMAIL` / `ADMIN_PASSWORD` | runtime | The only way to get an admin (12+ characters in production). Unset: no admin. Passwords are never logged or written to disk; an old `.data/admin-credentials.txt` is deleted on start. |
 | `TRUST_PROXY` | runtime | Behind nginx / a load balancer: `1` (a chain: its length; Cloudflare: `cloudflare`). Turns on per-IP limits for sign-ins, sign-ups and codes. Never set without a proxy: clients could then fake their IP. |
 | `TELEGRAM_BOT_TOKEN` | runtime | From @BotFather. Server-only — never `NEXT_PUBLIC_`. |
@@ -56,6 +56,8 @@ Expected on start:
 | `NEXT_PUBLIC_TELEGRAM_BOT_USERNAME is @A, but TELEGRAM_BOT_TOKEN belongs to @B` | Variable names another bot | Fix the variable, **rebuild** (links already use @B meanwhile) |
 | `NEXT_PUBLIC_TELEGRAM_BOT_USERNAME "…" isn't a valid bot username — ignored` | Typo | Fix it, rebuild |
 | `another process is polling this bot token` (repeating) | Two servers on one token (or a dev machine) | Stop the other one |
+| `[app] AUTH_URL is not set and the request arrives as http://localhost:3000` | Google sign-in would redirect visitors to localhost | Set `AUTH_URL=https://screenerix.com`, restart |
+| `[app] AUTH_URL is not a valid absolute URL` | e.g. `screenerix.com` without `https://` | Use the full origin |
 | `[auth] no admin account: set ADMIN_EMAIL and ADMIN_PASSWORD` | No admin configured | Set both, restart |
 | `[security] TRUST_PROXY is not set` | Limits count per email only | Behind a proxy: set `TRUST_PROXY` |
 | `[security] TRUST_PROXY=… but the request carries no usable X-Forwarded-For` | The proxy doesn't send the header (or the value is wrong) | nginx: `proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;` — or fix `TRUST_PROXY` |
