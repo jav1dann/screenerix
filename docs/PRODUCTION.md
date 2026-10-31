@@ -9,7 +9,8 @@ What to set, check and click before and after a deploy. Variables are documented
 | --- | --- | --- |
 | `AUTH_SECRET` | runtime | 32+ random characters. Unset in production = an error in the log. |
 | `AUTH_URL` | runtime | Public HTTPS origin, e.g. `https://screenerix.com` (Google redirect, payment webhooks, "Open Screenerix" links in Telegram). |
-| `ADMIN_EMAIL` / `ADMIN_PASSWORD` | runtime | Unset: an admin with a random password is printed to the log once. |
+| `ADMIN_EMAIL` / `ADMIN_PASSWORD` | runtime | The only way to get an admin (12+ characters in production). Unset: no admin. Passwords are never logged or written to disk; an old `.data/admin-credentials.txt` is deleted on start. |
+| `TRUST_PROXY` | runtime | Behind nginx / a load balancer: `1` (a chain: its length; Cloudflare: `cloudflare`). Turns on per-IP limits for sign-ins, sign-ups and codes. Never set without a proxy: clients could then fake their IP. |
 | `TELEGRAM_BOT_TOKEN` | runtime | From @BotFather. Server-only — never `NEXT_PUBLIC_`. |
 | `NEXT_PUBLIC_TELEGRAM_BOT_USERNAME` | **build** | Inlined by `next build`: set it in the build environment (CI, Docker build args), rebuild after a change. |
 | `VAPID_PUBLIC_KEY` / `VAPID_PRIVATE_KEY` / `VAPID_SUBJECT` | runtime | Web push. Generate once on the server (command in `.env.example`); `VAPID_SUBJECT` = your real `mailto:` / `https:`. |
@@ -55,6 +56,9 @@ Expected on start:
 | `NEXT_PUBLIC_TELEGRAM_BOT_USERNAME is @A, but TELEGRAM_BOT_TOKEN belongs to @B` | Variable names another bot | Fix the variable, **rebuild** (links already use @B meanwhile) |
 | `NEXT_PUBLIC_TELEGRAM_BOT_USERNAME "…" isn't a valid bot username — ignored` | Typo | Fix it, rebuild |
 | `another process is polling this bot token` (repeating) | Two servers on one token (or a dev machine) | Stop the other one |
+| `[auth] no admin account: set ADMIN_EMAIL and ADMIN_PASSWORD` | No admin configured | Set both, restart |
+| `[security] TRUST_PROXY is not set` | Limits count per email only | Behind a proxy: set `TRUST_PROXY` |
+| `[security] TRUST_PROXY=… but the request carries no usable X-Forwarded-For` | The proxy doesn't send the header (or the value is wrong) | nginx: `proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;` — or fix `TRUST_PROXY` |
 | `[auth] registration refused: RESEND_API_KEY is not set` | No email provider | Set `RESEND_API_KEY` (and `MAIL_FROM`), restart |
 | `[mail] Resend → HTTP 403 …` `domain is not verified` | `MAIL_FROM` domain not verified in Resend | Verify the domain (DNS records) in Resend, or change `MAIL_FROM` |
 | `[nowpayments] POST https://api.nowpayments.io/v1/payment (live) → HTTP 403 …` `INVALID_API_KEY` | Wrong key, or a sandbox key on the live API | Use the live key from the main dashboard; set `NOWPAYMENTS_SANDBOX` only with a sandbox key |

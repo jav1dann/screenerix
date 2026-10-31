@@ -1,14 +1,16 @@
 /**
  * User accounts in `.data/users.json` (atomic writes; mtime-cached reads, so the proxy and
  * the app — separate bundles — always see the same records). Passwords: scrypt + salt.
- * The admin account is seeded from `ADMIN_EMAIL` / `ADMIN_PASSWORD`, or created with a
- * random password printed once to the server console. Server-only.
+ * The admin account comes from `ADMIN_EMAIL` / `ADMIN_PASSWORD` only (see `ensureAdmin`).
+ * Server-only.
  */
+import 'server-only';
 import { randomBytes, randomUUID, scrypt, timingSafeEqual } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { DAY_MS, proPeriodStart, TRIAL_DAYS } from './access';
 import type { Plan, Role, SessionUser } from './access';
+import { isEmail } from '@/lib/format';
 import type { Lang } from '@/lib/telegram/i18n';
 import { DATA_DIR } from './session';
 
@@ -72,7 +74,6 @@ export interface UserRecord {
 const FILE = () => join(DATA_DIR, 'users.json');
 const SCRYPT = { N: 1 << 15, r: 8, p: 1, maxmem: 64 * 1024 * 1024 };
 const KEY_LEN = 64;
-export const DEFAULT_ADMIN_EMAIL = 'admin@screenerix.local';
 
 let cache: { mtimeMs: number; users: UserRecord[] } | null = null;
 
@@ -282,41 +283,48 @@ export const toSessionUser = (u: UserRecord): SessionUser => ({
 
 let seeding: Promise<void> | null = null;
 
+/** Written by versions that generated the admin password; it held that password in plain text. */
+const LEGACY_CRED_FILE = () => join(DATA_DIR, 'admin-credentials.txt');
+
 /**
- * Make sure the admin account exists. `ADMIN_EMAIL` / `ADMIN_PASSWORD` set: create it, or
- * promote that email to admin and sync the password when it changed. Unset (and no admin
- * yet): create `admin@screenerix.local` with a random password, printed once to the console.
+ * Make sure the admin account exists, from `ADMIN_EMAIL` / `ADMIN_PASSWORD` (run at server
+ * start by instrumentation.ts, and before sign-ins): create it, or promote that email to admin
+ * and sync the password when it changed. Unset: no admin is created — a password is never
+ * generated, printed to the log or written to a file. Passwords never appear in the log.
  */
 export function ensureAdmin(): Promise<void> {
-  // Never while `next build` prerenders: a generated password would only land in build logs.
+  // Not while `next build` prerenders pages.
   if (process.env.NEXT_PHASE === 'phase-production-build') return Promise.resolve();
   seeding ??= (async () => {
+    if (existsSync(LEGACY_CRED_FILE())) {
+      unlinkSync(LEGACY_CRED_FILE());
+      console.error(`[auth] deleted ${LEGACY_CRED_FILE()}: it stored the admin password in plain text. Set ADMIN_EMAIL / ADMIN_PASSWORD to manage the admin account (and change that password if the file may have been read).`);
+    }
     const email = process.env.ADMIN_EMAIL?.trim();
     const password = process.env.ADMIN_PASSWORD ?? '';
-    if (email) {
-      if (password.length < 8) console.error('[auth] ADMIN_PASSWORD must be at least 8 characters — admin password not set from env');
-      const existing = findByEmail(email);
-      if (!existing) {
-        if (password.length >= 8) {
-          await createUser({ email, name: process.env.ADMIN_NAME?.trim() || 'Admin', password, role: 'admin', plan: 'pro' });
-          console.log(`[auth] admin account created: ${normEmail(email)}`);
-        }
-        return;
+    if (!email || !password) {
+      if (!load().some((u) => u.role === 'admin')) {
+        console.error('[auth] no admin account: set ADMIN_EMAIL and ADMIN_PASSWORD (8+ characters) in the environment and restart');
+      } else if (process.env.NODE_ENV === 'production') {
+        console.warn('[auth] ADMIN_EMAIL / ADMIN_PASSWORD are not set — the existing admin account is left as it is');
       }
-      const patch: Partial<UserRecord> = {};
-      if (existing.role !== 'admin') patch.role = 'admin';
-      if (existing.plan !== 'pro') patch.plan = 'pro';
-      if (password.length >= 8 && !(await verifyPassword(existing, password))) Object.assign(patch, await hashPassword(password), { sessionVersion: existing.sessionVersion + 1 });
-      if (Object.keys(patch).length) { updateUser(existing.id, patch); console.log(`[auth] admin account updated: ${existing.email}`); }
       return;
     }
-    if (load().some((u) => u.role === 'admin')) return;
-    const generated = randomBytes(15).toString('base64url');
-    await createUser({ email: DEFAULT_ADMIN_EMAIL, name: 'Admin', password: generated, role: 'admin', plan: 'pro' });
-    // Also on disk (owner-only), so the password isn't lost if the console scrolled past it.
-    const credFile = join(DATA_DIR, 'admin-credentials.txt');
-    writeFileSync(credFile, `email: ${DEFAULT_ADMIN_EMAIL}\npassword: ${generated}\n\nGenerated because ADMIN_EMAIL / ADMIN_PASSWORD were not set.\nSign in, then set them (or change the password) and delete this file.\n`, { mode: 0o600 });
-    console.log(`[auth] ADMIN_EMAIL is not set — created admin "${DEFAULT_ADMIN_EMAIL}" with password: ${generated}\n[auth] also saved to ${credFile}; set ADMIN_EMAIL / ADMIN_PASSWORD to choose your own`);
+    if (!isEmail(normEmail(email))) { console.error('[auth] ADMIN_EMAIL is not a valid email address — admin not set from env'); return; }
+    if (password.length < 8) { console.error('[auth] ADMIN_PASSWORD must be at least 8 characters — admin not set from env'); return; }
+    if (password.length < 12 && process.env.NODE_ENV === 'production') console.warn('[auth] ADMIN_PASSWORD is shorter than 12 characters — use a longer one in production');
+    const existing = findByEmail(email);
+    if (!existing) {
+      await createUser({ email, name: process.env.ADMIN_NAME?.trim() || 'Admin', password, role: 'admin', plan: 'pro' });
+      console.log(`[auth] admin account created: ${normEmail(email)}`);
+      return;
+    }
+    const patch: Partial<UserRecord> = {};
+    if (existing.role !== 'admin') patch.role = 'admin';
+    if (existing.plan !== 'pro') patch.plan = 'pro';
+    // A changed ADMIN_PASSWORD signs the admin out everywhere.
+    if (!(await verifyPassword(existing, password))) Object.assign(patch, await hashPassword(password), { sessionVersion: existing.sessionVersion + 1 });
+    if (Object.keys(patch).length) { updateUser(existing.id, patch); console.log(`[auth] admin account updated from env: ${existing.email}${'passHash' in patch ? ' (new password)' : ''}`); }
   })().catch((e) => { seeding = null; console.error('[auth] admin seed failed', e); });
   return seeding;
 }

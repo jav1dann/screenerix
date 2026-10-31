@@ -3,6 +3,7 @@
  * account once it is fully paid. The only place Pro is granted. Synchronous from read to
  * write, so a webhook and a status poll landing together can't both apply it. Server-only.
  */
+import 'server-only';
 import { grantPro } from '@/lib/auth/users';
 import { FINAL_STATUSES, findOrder, patchOrder } from './orders';
 import type { Order, OrderStatus } from './orders';

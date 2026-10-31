@@ -15,6 +15,7 @@ import { bumpSessionVersion, burnPasswordCheck, createUser, ensureAdmin, findByE
 import type { UserRecord } from '@/lib/auth/users';
 import { canReplacePending, checkVerificationCode, sendVerificationCode } from '@/lib/auth/verification';
 import { isEmail } from '@/lib/format';
+import { clientIp } from '@/lib/server/clientIp';
 import { mailReady } from '@/lib/mail/send';
 
 export interface AuthState {
@@ -32,14 +33,14 @@ const str = (v: FormDataEntryValue | null) => (typeof v === 'string' ? v : '');
 const MAX_PASSWORD = 200;
 
 /**
- * Throttle keys: the email, plus the client IP when a trusted reverse proxy sets
- * X-Forwarded-For (`TRUST_PROXY=1`). Without one the header is client-controlled, so it isn't
- * used (and there's no socket address here), and failures are counted per email only.
+ * Throttle keys: the email (`e:`), plus the client IP (`ip:`) when a trusted reverse proxy
+ * reports it (`TRUST_PROXY`, see clientIp.ts). Without one there's no trustworthy address, and
+ * attempts are counted per email only. Rules per kind: throttle.ts.
  */
-async function throttleKeys(email: string, prefix = ''): Promise<string[]> {
-  if (process.env.TRUST_PROXY !== '1') return [`${prefix}e:${email}`];
-  const ip = (await headers()).get('x-forwarded-for')?.split(',')[0]?.trim();
-  return ip ? [`${prefix}e:${email}`, `${prefix}ip:${ip}`] : [`${prefix}e:${email}`];
+async function throttleKeys(email: string, prefix = ''): Promise<{ email: string; ip: string | null; all: string[] }> {
+  const ip = clientIp(await headers());
+  const keys = { email: `${prefix}e:${email}`, ip: ip ? `${prefix}ip:${ip}` : null };
+  return { ...keys, all: keys.ip ? [keys.email, keys.ip] : [keys.email] };
 }
 
 const MAIL_FAILED = 'We couldn’t send the verification email. Please try again in a moment.';
@@ -60,14 +61,16 @@ export async function signIn(_prev: AuthState, form: FormData): Promise<AuthStat
   if (!isEmail(email)) return { error: 'Enter a valid email address.', email };
   if (!password || password.length > MAX_PASSWORD) return { error: 'Enter your password.', email };
   const keys = await throttleKeys(email);
-  if (isThrottled(keys)) return { error: 'Too many attempts. Try again in a few minutes.', email };
+  if (isThrottled(keys.all)) return { error: 'Too many attempts. Try again in a few minutes.', email };
   const user = findByEmail(email);
   const ok = user ? await verifyPassword(user, password) : (await burnPasswordCheck(password), false);
   if (!user || !ok) {
-    recordFailure(keys);
+    recordFailure(keys.all);
     return { error: 'Invalid email or password.', email };
   }
-  clearFailures(keys);
+  // Only this email's count: the IP's keeps counting, or signing in to one's own account
+  // between guesses would reset the limit on guessing other people's passwords.
+  clearFailures([keys.email]);
   if (isPendingVerification(user)) return toVerify(user, form.get('lang'), { error: null, email });
   await createSession(user);
   redirect(next);
@@ -89,7 +92,8 @@ export async function register(_prev: AuthState, form: FormData): Promise<AuthSt
     return { error: 'Registration is temporarily unavailable. Please try again later.', email, name };
   }
   // New sign-ups per client IP (behind a trusted proxy): each one sends an email.
-  const ipKeys = (await throttleKeys(email, 'reg:')).filter((k) => k.startsWith('reg:ip:'));
+  const regIp = (await throttleKeys(email, 'reg:')).ip;
+  const ipKeys = regIp ? [regIp] : [];
   if (isThrottled(ipKeys)) return { error: 'Too many sign-ups from this network. Try again in a few minutes.', email, name };
   const existing = findByEmail(email);
   let user: UserRecord | null;
@@ -121,20 +125,20 @@ export async function verifyEmail(_prev: AuthState, form: FormData): Promise<Aut
   const stay = (error: string): AuthState => ({ error, verify: { email, resendIn: 0 } });
   if (!/^\d{6}$/.test(code.replace(/\s/g, ''))) return stay('Enter the 6-digit code from the email.');
   const keys = await throttleKeys(email, 'v:');
-  if (isThrottled(keys)) return stay('Too many attempts. Try again in a few minutes.');
+  if (isThrottled(keys.all)) return stay('Too many attempts. Try again in a few minutes.');
   const user = findByEmail(email);
   if (!user || !isPendingVerification(user)) {
-    recordFailure(keys);
+    recordFailure(keys.all);
     return stay('This code is incorrect or has expired.');
   }
   const r = checkVerificationCode(user, code);
   if (!r.ok) {
-    recordFailure(keys);
+    recordFailure(keys.all);
     if (r.reason === 'expired') return stay('This code has expired. Send a new one.');
     if (r.reason === 'locked') return stay('Too many incorrect attempts. Send a new code.');
     return stay(`That code is incorrect. ${r.attemptsLeft} attempt${r.attemptsLeft === 1 ? '' : 's'} left.`);
   }
-  clearFailures(keys);
+  clearFailures([keys.email]);
   await createSession(r.user);
   redirect(next);
 }

@@ -9,6 +9,7 @@
  * The redirect URI is `${AUTH_URL or the request origin}/api/auth/google/callback` and must
  * be registered on the OAuth client in Google Cloud Console. Server-only.
  */
+import 'server-only';
 import { createHash, randomBytes } from 'node:crypto';
 import { appOrigin } from '@/lib/server/origin';
 import { signBlob, verifyBlob } from './session';

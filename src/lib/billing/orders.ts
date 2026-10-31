@@ -3,6 +3,7 @@
  * `users.json`). Every change is announced on an in-process emitter, which wakes the
  * order's status stream. Server-only.
  */
+import 'server-only';
 import { randomBytes } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import { existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs';

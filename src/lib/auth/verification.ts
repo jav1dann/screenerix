@@ -4,6 +4,7 @@
  * with a 10-minute expiry, sent by email. Each code allows 5 guesses; a new one can be sent
  * after a 1-minute cooldown, at most 5 per hour. Server-only.
  */
+import 'server-only';
 import { createHmac, randomInt, timingSafeEqual } from 'node:crypto';
 import { isLocale } from '@/lib/landing/i18n/locales';
 import type { Locale } from '@/lib/landing/i18n/locales';

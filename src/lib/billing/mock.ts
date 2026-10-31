@@ -4,6 +4,7 @@
  * NOWPayments) is the simulated payment: it updates this provider's record, which the webhook
  * route then re-fetches like it would from NOWPayments. In memory, per server process.
  */
+import 'server-only';
 import { randomBytes } from 'node:crypto';
 import type { Network } from './networks';
 import { ipnSecret, ProviderError, SIGNATURE_HEADER, verifySignedBody } from './provider';

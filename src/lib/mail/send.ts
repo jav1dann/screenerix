@@ -4,6 +4,7 @@
  * Resend). Unset outside production: the message is printed to the server console instead,
  * so registration works locally. Unset in production: `mailReady()` is false. Server-only.
  */
+import 'server-only';
 const ENDPOINT = 'https://api.resend.com/emails';
 const TIMEOUT_MS = 15_000;
 const DEFAULT_FROM = 'Screenerix <support@screenerix.com>';

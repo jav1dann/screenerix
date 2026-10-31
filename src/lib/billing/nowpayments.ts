@@ -4,6 +4,7 @@
  * payment (deposit address + exact amount). Failed calls are logged with the request and the
  * provider's raw response under `[nowpayments]` (never the API key). Server-only.
  */
+import 'server-only';
 import type { Network } from './networks';
 import { ipnSecret, ProviderError, SIGNATURE_HEADER, verifySignedBody } from './provider';
 import type { PaymentProvider, ProviderPayment, ProviderStatus } from './provider';

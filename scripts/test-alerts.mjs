@@ -97,9 +97,10 @@ try {
     VAPID_SUBJECT: 'mailto:test@screenerix.local',
     NODE_EXTRA_CA_CERTS: join(dir, 'push-cert.pem'),
   };
+  // server-env.cjs: `server-only` resolves to its empty module, as on the Next.js server.
   const tsx = join(root, 'node_modules', '.bin', process.platform === 'win32' ? 'tsx.cmd' : 'tsx');
   code = await new Promise((resolve) => {
-    const child = spawn(tsx, ['--tsconfig', join(root, 'tsconfig.json'), join(root, 'scripts', 'alerts-harness.ts')], { cwd: root, env, stdio: 'inherit' });
+    const child = spawn(tsx, ['--tsconfig', join(root, 'tsconfig.json'), '--require', join(root, 'scripts', 'server-env.cjs'), join(root, 'scripts', 'alerts-harness.ts')], { cwd: root, env, stdio: 'inherit' });
     child.on('exit', (c) => resolve(c ?? 1));
   });
 } catch (e) {

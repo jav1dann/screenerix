@@ -12,6 +12,7 @@
  * State lives on globalThis (server actions and the poller can sit in different bundles).
  * Server-only.
  */
+import 'server-only';
 import { randomBytes } from 'node:crypto';
 import { findById, findByTelegramId, setLang, setTelegram } from '@/lib/auth/users';
 import { parseBotUsername } from './client';

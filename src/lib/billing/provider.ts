@@ -5,6 +5,7 @@
  * Webhooks are signed NOWPayments-style either way (HMAC-SHA512 of the key-sorted JSON body,
  * `x-nowpayments-sig`, keyed with `NOWPAYMENTS_IPN_SECRET`). Server-only.
  */
+import 'server-only';
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import { mockProvider } from './mock';
 import type { Network } from './networks';

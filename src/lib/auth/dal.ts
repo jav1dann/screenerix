@@ -2,6 +2,7 @@
  * Data access layer for auth (server components, actions, route handlers): the session
  * cookie → a verified, current user. Pages that need a user call `requireUser()`.
  */
+import 'server-only';
 import { io } from 'next/cache';
 import { cookies } from 'next/headers';
 import { redirect } from 'next/navigation';

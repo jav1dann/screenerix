@@ -6,6 +6,7 @@
  * password change) invalidates older tokens wherever the user record is checked.
  * Server-only — never import from client components.
  */
+import 'server-only';
 import { randomBytes } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';

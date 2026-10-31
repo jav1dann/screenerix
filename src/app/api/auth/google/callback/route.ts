@@ -9,14 +9,14 @@ import type { NextRequest } from 'next/server';
 import { getCurrentUser, sessionCookie } from '@/lib/auth/dal';
 import { appOrigin, exchangeCode, GoogleAuthError, googleConfig, loginErrorUrl, OAUTH_COOKIE, OAUTH_COOKIE_PATH, readOAuthState, redirectUri } from '@/lib/auth/google';
 import type { GoogleErrorCode } from '@/lib/auth/google';
-import { clearFailures, isThrottled, recordFailure } from '@/lib/auth/throttle';
+import { isThrottled, recordFailure } from '@/lib/auth/throttle';
 import { ensureAdmin, findOrCreateGoogleUser, linkGoogle } from '@/lib/auth/users';
+import { clientIp } from '@/lib/server/clientIp';
 
-/** Per-IP throttle keys — only behind a trusted proxy (otherwise X-Forwarded-For is client-controlled). */
+/** Per-IP throttle keys — only behind a trusted proxy (`TRUST_PROXY`, see clientIp.ts). */
 function throttleKeys(req: NextRequest): string[] {
-  if (process.env.TRUST_PROXY !== '1') return [];
-  const ip = req.headers.get('x-forwarded-for')?.split(',')[0]?.trim();
-  return ip ? [`google:${ip}`] : [];
+  const ip = clientIp(req.headers);
+  return ip ? [`google:ip:${ip}`] : [];
 }
 
 /** Redirect (no-store) that also drops the one-time OAuth cookie. */
@@ -60,7 +60,6 @@ export async function GET(req: NextRequest) {
     recordFailure(keys);
     return fail(reason.code);
   }
-  clearFailures(keys);
 
   if (saved.mode === 'link') {
     // Connecting from the account screen: only to the same signed-in account that started it.

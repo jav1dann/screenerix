@@ -3,6 +3,7 @@
  * (`VAPID_PUBLIC_KEY` / `VAPID_PRIVATE_KEY` / `VAPID_SUBJECT`, server-side env). Subscriptions
  * the push service reports gone (404 / 410) are dropped. Server-only.
  */
+import 'server-only';
 import { existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import webpush from 'web-push';

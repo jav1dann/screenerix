@@ -3,6 +3,7 @@
  * request's origin. Builds the URLs handed to third parties — the Google redirect URI and the
  * payment webhook. Server-only.
  */
+import 'server-only';
 export function appOrigin(requestOrigin: string): string {
   const configured = process.env.AUTH_URL?.trim().replace(/\/+$/, '');
   if (!configured && process.env.NODE_ENV === 'production') {
